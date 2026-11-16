@@ -1,0 +1,1152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>camwall</title>
+<link rel="icon" href="/icon.svg">
+<style>
+  :root {
+    color-scheme: dark;
+    --accent: #60a5fa;
+    --live: #22c55e;
+    --warn: #eab308;
+    --bad: #ef4444;
+    --replay: #a78bfa;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0a0a; }
+  body { color: #fff; font: 13px/1.4 var(--font); }
+  body.idle, body.idle * { cursor: none !important; }
+  [hidden] { display: none !important; }
+
+  .grid { display: grid; gap: 2px; width: 100vw; height: 100vh; height: 100dvh; }
+  .cam {
+    position: relative; min-width: 0; min-height: 0; background: #000; cursor: zoom-in;
+    overflow: hidden; touch-action: none; user-select: none;
+  }
+  .grid.zoomed .cam { cursor: zoom-out; }
+  .grid .cam.magnified { cursor: grab; }
+  .grid .cam.dragging { cursor: grabbing; }
+  .view { position: absolute; inset: 0; }
+  .cam img, .cam video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: var(--fit, contain); }
+  .cam img:not([src]) { visibility: hidden; }
+  .cam:not([data-replay]) img.replay { display: none; }
+  .cam.bw .view { filter: grayscale(1); }
+  .gone { position: absolute; inset: 0; display: grid; place-content: center; gap: 4px; padding: 16px; text-align: center; color: #9ca3af; }
+
+  .status { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; }
+  .badge {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 9px; border-radius: 999px; background: rgb(0 0 0 / 0.55);
+    font-size: 12px; font-variant-numeric: tabular-nums; backdrop-filter: blur(4px);
+  }
+  .title {
+    position: absolute; left: 8px; bottom: 10px; max-width: calc(100% - 16px); padding: 3px 9px; border-radius: 999px;
+    background: rgb(0 0 0 / 0.55); font-size: 12px; backdrop-filter: blur(4px); pointer-events: none;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: opacity 0.2s;
+  }
+  body.no-labels .title { display: none; }
+  .cam:hover .title, body.idle .title { opacity: 0; }
+  body.idle.no-hide .title { opacity: 1; }
+  .credit {
+    position: absolute; right: 8px; bottom: 10px; max-width: 40%; padding: 2px 8px; border-radius: 999px;
+    background: rgb(0 0 0 / 0.55); font-size: 11px; opacity: 0.85; backdrop-filter: blur(4px); cursor: help;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: opacity 0.2s;
+  }
+  .cam.credited .title { max-width: calc(60% - 24px); }
+  .cam:hover .credit { opacity: 0; pointer-events: none; }
+  .controls .cam-name { font-weight: 600; max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .cam[data-state="live"] .dot, .cam[data-state="video"] .dot { background: var(--live); }
+  .cam[data-state="gone"] .dot { background: #6b7280; }
+  .cam[data-state="late"] .dot { background: var(--warn); }
+  .cam[data-state="stale"] .dot, .cam[data-state="error"] .dot { background: var(--bad); }
+  .cam[data-replay] .dot { background: var(--replay); }
+  .dot.pulse { animation: pulse 0.9s ease-out; }
+  @keyframes pulse {
+    from { box-shadow: 0 0 0 0 rgb(255 255 255 / 0.85); }
+    to { box-shadow: 0 0 0 9px rgb(255 255 255 / 0); }
+  }
+  .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; }
+  .bar i { display: block; height: 100%; background: var(--accent); opacity: 0.8; transform-origin: left; transform: scaleX(0); }
+  .cam[data-state="late"] .bar i { background: var(--warn); }
+  .cam[data-replay] .bar { visibility: hidden; }
+
+  .controls {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+    padding: 28px 12px 10px; background: linear-gradient(rgb(0 0 0 / 0), rgb(0 0 0 / 0.75));
+    cursor: default; opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+  .cam:hover .controls { opacity: 1; pointer-events: auto; }
+  @media (hover: none) {  /* touch screens: a camera filling the screen shows its controls (there's no hovering) */
+    .grid.zoomed .cam .controls { opacity: 1; pointer-events: auto; }
+    body.idle .grid.zoomed .cam .controls { opacity: 0; pointer-events: none; }
+  }
+  body.idle .controls { opacity: 0; pointer-events: none; }
+  .controls button {
+    font: inherit; color: #fff; background: rgb(255 255 255 / 0.12);
+    border: 1px solid rgb(255 255 255 / 0.22); border-radius: 6px; padding: 2px 8px; cursor: pointer;
+  }
+  .controls button:hover { background: rgb(255 255 255 / 0.24); }
+  .controls button.on { background: #fff; color: #000; }
+  .controls .play { width: 34px; }
+  .controls .chips { display: inline-flex; gap: 4px; }
+  .cam:not([data-replay]) .to-live { display: none; }
+  .cam.video .replay-only { display: none; }
+  .scrub { flex: 1 1 160px; min-width: 120px; margin: 0; accent-color: var(--replay); }
+  .toast {
+    position: absolute; top: 36px; left: 50%; transform: translateX(-50%); padding: 3px 12px; border-radius: 999px;
+    background: rgb(0 0 0 / 0.75); font-size: 12px; white-space: nowrap; pointer-events: none;
+  }
+  .when { min-width: 150px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .chrome { position: fixed; top: 8px; left: 8px; z-index: 2; display: grid; gap: 6px; justify-items: start; max-width: calc(100vw - 16px); }
+  .corner, .sets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .corner > *, .sets > * {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border: 0; border-radius: 999px;
+    background: rgb(0 0 0 / 0.6); color: #fff; font: 12px/1.4 var(--font); text-decoration: none;
+    backdrop-filter: blur(4px); cursor: pointer; transition: opacity 0.2s;
+  }
+  .corner > *:hover, .sets > *:hover { background: rgb(0 0 0 / 0.85); }
+  .corner > .on, .sets > .on { background: #fff; color: #000; }
+  .corner .brand { font-weight: 700; }
+  .corner .brand img { width: 14px; height: 14px; }
+  .sets > .edit { background: rgb(96 165 250 / 0.85); }
+  body.idle .corner > :not(.mute.on), body.idle .sets > * { opacity: 0; pointer-events: none; }
+  .empty { position: fixed; inset: 0; display: grid; place-content: center; gap: 12px; padding: 24px; text-align: center; color: #9ca3af; font-size: 15px; }
+  .empty a { justify-self: center; padding: 8px 16px; border-radius: 8px; background: var(--accent); color: #0b1220; font-weight: 600; text-decoration: none; }
+  .problem {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 3;
+    width: min(560px, calc(100vw - 32px)); padding: 10px 14px; border-radius: 10px;
+    background: rgb(40 16 16 / 0.92); border: 1px solid var(--bad); color: #f3f4f6;
+  }
+  .alert {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 4; display: flex; align-items: center; gap: 12px;
+    padding: 8px 14px 8px 8px; border-radius: 12px; background: rgb(20 20 24 / 0.94); border: 2px solid var(--bad);
+    box-shadow: 0 8px 30px rgb(0 0 0 / 0.5); cursor: pointer; max-width: calc(100vw - 24px); animation: drop 0.25s ease-out;
+  }
+  .alert img { width: 120px; height: 68px; object-fit: cover; border-radius: 7px; background: #000; }
+  .alert b { display: block; font-size: 15px; }
+  .alert span { color: #b8bfc9; font-size: 12px; }
+  .alert[data-kind="police"] { border-color: #3b82f6; }
+  .alert[data-kind="fire"] { border-color: #f97316; }
+  @keyframes drop { from { transform: translate(-50%, -20px); opacity: 0; } }
+  .cam.alerting { outline: 4px solid var(--bad); outline-offset: -4px; }
+  .cam.alerting[data-kind="police"] { outline-color: #3b82f6; }
+  .cam.alerting[data-kind="fire"] { outline-color: #f97316; }
+  .drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 5; width: min(380px, 100vw); overflow-y: auto; padding: 14px;
+    background: #141619; border-left: 1px solid #2b3038; box-shadow: -10px 0 30px rgb(0 0 0 / 0.4);
+  }
+  .drawer h2 { display: flex; justify-content: space-between; align-items: center; margin: 0 0 10px; font-size: 16px; }
+  .drawer h2 button { border: 0; background: none; color: #9aa3ae; font-size: 20px; cursor: pointer; }
+  .drawer ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .drawer li { display: grid; grid-template-columns: 110px 1fr; gap: 10px; align-items: center; }
+  .drawer li a { display: block; }
+  .drawer li img { width: 110px; height: 62px; object-fit: cover; border-radius: 6px; background: #000; display: block; }
+  .drawer li span { color: #9aa3ae; font-size: 12px; display: block; }
+  .drawer .none { color: #9aa3ae; }
+  .drawer .marks { display: flex; gap: 4px; margin-top: 4px; }
+  .drawer .marks button { font: 11px var(--font); padding: 1px 8px; border-radius: 999px; border: 1px solid #3a404a; background: none; color: #c7cdd6; cursor: pointer; }
+  .drawer .marks button.on[data-v="real"] { background: #16a34a; border-color: #16a34a; color: #fff; }
+  .drawer .marks button.on[data-v="wrong"] { background: #dc2626; border-color: #dc2626; color: #fff; }
+  .drawer .hint { color: #9aa3ae; font-size: 12px; margin: -4px 0 10px; }
+  .help {
+    position: fixed; inset: 0; z-index: 5; display: grid; place-content: center; background: rgb(0 0 0 / 0.7);
+  }
+  .help > div { width: min(440px, calc(100vw - 32px)); padding: 18px 22px; border-radius: 12px; background: #17191d; border: 1px solid #2b3038; }
+  .help h2 { margin: 0 0 10px; font-size: 16px; }
+  .help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+  .help dt { font: 12px ui-monospace, Menlo, monospace; color: #9aa3ae; text-align: right; }
+  .help dd { margin: 0; }
+</style>
+</head>
+<body>
+<main id="grid" class="grid"></main>
+<div id="empty" class="empty" hidden>No cameras on this wall yet.<a href="/cameras.html">Choose cameras</a></div>
+<div class="chrome">
+<nav class="corner">
+  <a class="brand" href="/cameras.html" title="Choose cameras (c)"><img src="/icon.svg" alt="">camwall</a>
+  <button class="mute" type="button" hidden title="Mute alerts (m): they still show a notification, without sound"></button>
+  <a href="/settings.html" title="Settings (s)">⚙ Settings</a>
+  <button class="bw-all" type="button" title="Every camera in black and white (b)">◐ B&amp;W</button>
+  <button class="full" type="button" title="Full screen (f)">⛶</button>
+  <button class="bell" type="button" hidden title="Alerts the detector has made (a)">🔔 Alerts</button>
+  <button class="keys" type="button" title="Keyboard shortcuts (?)">?</button>
+</nav>
+<nav class="sets"></nav>
+</div>
+<p id="problem" class="problem" hidden></p>
+<div id="alert" class="alert" hidden></div>
+<aside id="drawer" class="drawer" hidden><h2>Alerts <button type="button" aria-label="Close">×</button></h2>
+  <p class="hint">Mark each one Real or Wrong: the detector learns from them what these look like on your cameras.</p><ol></ol></aside>
+<div id="help" class="help" hidden><div>
+  <h2>Keyboard shortcuts</h2>
+  <dl>
+    <dt>1–9</dt><dd>Switch wall</dd>
+    <dt>click</dt><dd>One camera full size (again to go back)</dd>
+    <dt>scroll · drag</dt><dd>Zoom into a picture · move it</dd>
+    <dt>f</dt><dd>Full screen</dd>
+    <dt>b</dt><dd>Black and white (easier at night)</dd>
+    <dt>m</dt><dd>Mute alerts</dd>
+    <dt>a</dt><dd>Alerts the detector has made</dd>
+    <dt>c</dt><dd>Choose cameras</dd>
+    <dt>s</dt><dd>Settings</dd>
+    <dt>Esc</dt><dd>Back to live, hide the controls</dd>
+  </dl>
+</div></div>
+
+<template id="cam-tpl">
+  <article class="cam" data-state="connecting">
+    <div class="view">
+      <img class="current" alt="">
+      <img class="replay" alt="">
+    </div>
+    <div class="status"><div class="badge"><span class="dot"></span><span class="label">Connecting</span></div></div>
+    <div class="toast" hidden></div>
+    <span class="title"></span>
+    <span class="credit" hidden></span>
+    <div class="bar"><i></i></div>
+    <div class="controls">
+      <span class="cam-name"></span>
+      <button class="play replay-only" type="button" title="Play / pause replay">▶︎</button>
+      <input class="scrub replay-only" type="range" min="-30" max="0" step="any" value="0" aria-label="Replay position">
+      <span class="when"></span>
+      <span class="chips replay-only">
+        <button type="button" data-window="30">30s</button>
+        <button type="button" data-window="60">1m</button>
+        <button type="button" data-window="120">2m</button>
+        <button type="button" data-window="300">5m</button>
+      </span>
+      <button class="speed replay-only" type="button" title="Replay speed"></button>
+      <button class="zoom" type="button" title="Zoom in steps (or scroll on the picture; drag to move)"></button>
+      <button class="bw" type="button" title="This camera in black and white (b for every camera)">◐ B&amp;W</button>
+      <button class="mode" type="button" hidden></button>
+      <button class="to-live" type="button">Live</button>
+    </div>
+  </article>
+</template>
+
+<script src="/vendor/hls.min.js"></script>
+<script>
+// The wall: the cameras of one set at a time, as large as the screen allows. Pictures come through camwall's relay
+// (/cam/<key>), which passes on when each was taken, so a camera is checked just before its next picture is due.
+// Video cameras play through the relay too (/hls/<key>/, /mjpeg/<key>).
+const TILE_ASPECT = 16 / 9;   // camera frame shape, used to pick the grid that shows them largest
+
+const LEARN_POLL = 750;       // ms between checks until the update rate is known
+const FAST_POLL = 400;        // ms between checks while a new frame is due
+const LEAD = 1000;            // start checking this long before a frame is due
+const PRECISE_GAP = 1200;     // a new frame's arrival is pinned down if the previous check was this recent
+const HISTORY = 24;           // frame timestamps kept for the rate estimate
+const CURSOR_HIDE = 2500;     // ms without mouse movement before the cursor is hidden
+const MAX_WAIT = 60_000;      // longest wait between checks of a slow camera
+
+const BUFFER_MS = 5 * 60_000; // footage kept per camera for replay (in memory)
+const FOOTAGE_STEP = 1000;    // fast cameras: keep at most one frame per this many ms for replay
+const MAX_GAP_HOLD = 15_000;  // a gap in the footage (camera or tab paused) replays as at most this long
+const SPEEDS = [4, 8, 16, 1]; // replay speed vs real time
+const WINDOWS = [30, 60, 120, 300];  // seconds; must match the template's data-window buttons
+const MAX_MAG = 4;            // furthest scroll-zoom into a picture
+const ZOOM_STEPS = [2, 3, 4]; // levels the Zoom button steps through before going back to 1×
+const SETUP_POLL = 5000;      // ms between checks of the sets (changed on the cameras page) and settings
+const ALERT_POLL = 2000;      // ms between checks for the detector's alerts
+const ALERT_SHOWN = 30_000;   // ms an alert stays up (and its camera outlined)
+
+const LABELS = {
+  connecting: 'Connecting', detecting: 'Measuring rate', syncing: 'Syncing', live: 'Live',
+  late: 'Late', stale: 'Stale', error: 'Error', video: 'Live video', gone: 'Not listed',
+};
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const setText = (el, text) => { if (el.textContent !== text) el.textContent = text; };
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+const enc = encodeURIComponent;
+
+function formatAge(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor(s / 60) % 60}m`;
+}
+
+const store = {
+  get(name, fallback) { try { return JSON.parse(localStorage.getItem(`camwall-${name}`)) ?? fallback; } catch { return fallback; } },
+  set(name, value) { try { localStorage.setItem(`camwall-${name}`, JSON.stringify(value)); } catch {} },
+};
+
+// Replay window and speed are shared by all cameras and remembered between visits.
+const replay = { window: 30, speed: SPEEDS[0], ...store.get('replay', {}) };
+if (!WINDOWS.includes(replay.window)) replay.window = 30;
+if (!SPEEDS.includes(replay.speed)) replay.speed = SPEEDS[0];
+
+// Each camera's zoom and pan, black and white, and picture-or-video choice, by key, remembered between visits.
+const views = store.get('views', {});
+let viewSaveTimer;
+function saveView(cam) {
+  views[cam.key] = { mag: cam.mag, x: cam.panX, y: cam.panY };
+  clearTimeout(viewSaveTimer);
+  viewSaveTimer = setTimeout(() => store.set('views', views), 300);
+}
+let blackWhite = new Set(store.get('bw', []));
+function setBlackWhite(keys, on) {
+  for (const key of keys) on ? blackWhite.add(key) : blackWhite.delete(key);
+  store.set('bw', [...blackWhite]);
+  renderBlackWhite();
+}
+const videoChoice = store.get('video', {});  // key -> true: show the video of a camera that has both
+
+let setup = { sets: [], alerts: {}, cameras: {} };
+let setupText = null;        // the server's last answer, to tell when it changes
+let settings = {};
+let setId = store.get('set', null);
+let cams = [];               // the cameras of the set on screen, in its order
+let running = false;
+let zoomed = null;           // camera filling the screen, or null for the grid
+
+// Average spacing of frame timestamps. Gaps are counted in whole frames so a skipped frame (2×, 3×) doesn't skew
+// it and Last-Modified's 1-second rounding averages out; longer gaps (tab hidden, camera hiccup) are left out.
+function estimatePeriod(stamps) {
+  const gaps = stamps.slice(1).map((t, i) => t - stamps[i]).filter((g) => g > 0);
+  if (gaps.length < 2) return null;
+  let period = median(gaps);
+  if (period < 1000) return (stamps.at(-1) - stamps[0]) / (stamps.length - 1);
+  for (let pass = 0; pass < 2; pass++) {
+    let total = 0, frames = 0;
+    for (const g of gaps) {
+      const n = Math.round(g / period);
+      if (n >= 1 && n <= 3) { total += g; frames += n; }
+    }
+    if (!frames) return null;
+    period = total / frames;
+  }
+  return period;
+}
+
+class Camera {
+  constructor(key, info) {
+    this.key = key;
+    this.name = info.name;
+    this.info = info;
+    this.el = $('#cam-tpl').content.firstElementChild.cloneNode(true);
+    this.img = $('img.current', this.el);
+    this.replayImg = $('img.replay', this.el);
+    this.dot = $('.dot', this.el);
+    this.label = $('.label', this.el);
+    this.bar = $('.bar i', this.el);
+    this.playBtn = $('.play', this.el);
+    this.scrub = $('.scrub', this.el);
+    this.when = $('.when', this.el);
+    this.windowBtns = [...this.el.querySelectorAll('[data-window]')];
+    this.speedBtn = $('.speed', this.el);
+    this.zoomBtn = $('.zoom', this.el);
+    this.bwBtn = $('.bw', this.el);
+    this.modeBtn = $('.mode', this.el);
+    this.toast = $('.toast', this.el);
+    this.view = $('.view', this.el);
+    this.img.alt = this.replayImg.alt = this.name;
+    $('.title', this.el).textContent = $('.cam-name', this.el).textContent = this.name;
+    const credit = $('.credit', this.el);  // (its source's terms ask for it, and for the disclaimer with it)
+    credit.hidden = !info.credit;
+    credit.textContent = info.credit ?? '';
+    credit.title = info.disclaimer ? `${info.credit}\n\n${info.disclaimer}` : '';
+    $('.cam-name', this.el).title = credit.title || (info.credit ?? '');
+    this.el.classList.toggle('credited', Boolean(info.credit));
+    this.disposed = false;
+
+    // What it shows: its picture, or (when it has no picture, or the user chose it) its video.
+    this.hasPicture = Boolean(info.media & 1);
+    this.hasVideo = Boolean(info.media & 2);
+    this.gone = Boolean(info.gone);
+    this.video = this.hasVideo && (!this.hasPicture || videoChoice[key] === true);
+    this.el.classList.toggle('video', this.video || this.gone);
+    this.modeBtn.hidden = !(this.hasPicture && this.hasVideo);
+    this.modeBtn.textContent = this.video ? '🖼 Pictures' : '▶ Video';
+    this.modeBtn.title = this.video ? 'Show its still pictures (lighter, with replay)' : 'Show its live video';
+
+    this.etag = null;
+    this.lastModified = null;  // ms on the camera server's clock, for the frame on screen
+    this.shownAt = null;       // ms, when the frame on screen arrived here
+    this.arrival = null;       // ms, when that frame appeared upstream; null = not pinned down
+    this.lastCheck = null;     // ms, start of the latest successful check
+    this.longPoll = false;     // the relay holds each request until there's a newer picture (the user's own cameras)
+    this.skews = [];
+    this.skew = 0;             // camera-server clock minus ours
+    this.stamps = [];
+    this.period = null;        // ms between camera updates
+    this.failures = 0;
+    this.error = '';
+    this.timer = null;
+    this.inflight = false;
+    this.player = null;        // hls.js, for HLS video in browsers without it built in
+
+    this.footage = [];         // { url, at (server clock ms) }, oldest first
+    this.unkept = null;        // blob URL of an on-screen frame that wasn't stored for replay
+    this.toastTimer = null;
+    this.replaying = false;
+    this.cursor = null;        // footage entry shown while replaying
+    this.playing = false;
+    this.playTimer = null;
+
+    const saved = views[key];
+    this.mag = saved?.mag >= 1 && saved.mag <= MAX_MAG ? saved.mag : 1;
+    this.panX = Number.isFinite(saved?.x) ? saved.x : 0;
+    this.panY = Number.isFinite(saved?.y) ? saved.y : 0;
+    this.drag = null;
+    this.dragged = false;
+
+    if (this.gone) {
+      this.view.replaceChildren(Object.assign(document.createElement('div'), { className: 'gone',
+        textContent: 'Its source no longer lists this camera (or has been switched off in Settings).' }));
+    }
+
+    this.el.addEventListener('click', () => {
+      if (this.dragged) this.dragged = false;
+      else toggleZoom(this);
+    });
+    this.el.addEventListener('wheel', (event) => this.onWheel(event), { passive: false });
+    this.el.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || event.target.closest('.controls')) return;
+      this.drag = { x: event.clientX, y: event.clientY, moved: false };
+      this.dragged = false;
+      this.el.setPointerCapture(event.pointerId);
+    });
+    this.el.addEventListener('pointermove', (event) => this.onDrag(event));
+    this.el.addEventListener('dragstart', (event) => event.preventDefault());
+    for (const type of ['pointerup', 'pointercancel']) {
+      this.el.addEventListener(type, () => {
+        if (this.drag?.moved) {
+          this.dragged = true;
+          saveView(this);
+        }
+        this.drag = null;
+        this.el.classList.remove('dragging');
+      });
+    }
+    this.zoomBtn.addEventListener('click', () => {
+      const next = ZOOM_STEPS.find((m) => m > this.mag + 0.05) ?? 1;
+      this.zoomAbout(next / this.mag, 0, 0);
+    });
+    this.bwBtn.addEventListener('click', () => setBlackWhite([key], !blackWhite.has(key)));
+    this.modeBtn.addEventListener('click', () => {
+      videoChoice[key] = !this.video;
+      store.set('video', videoChoice);
+      replaceCamera(this);
+    });
+    this.el.addEventListener('mouseleave', () => this.endReplay());
+    $('.controls', this.el).addEventListener('click', (event) => event.stopPropagation());
+    this.playBtn.addEventListener('click', () => {
+      if (this.replaying) this.setPlaying(!this.playing);
+      else this.startReplay();
+    });
+    this.scrub.addEventListener('input', () => this.scrubTo(Number(this.scrub.value)));
+    for (const btn of this.windowBtns) {
+      btn.addEventListener('click', () => {
+        replay.window = Number(btn.dataset.window);
+        store.set('replay', replay);
+        this.startReplay();
+      });
+    }
+    this.speedBtn.addEventListener('click', () => {
+      replay.speed = SPEEDS[(SPEEDS.indexOf(replay.speed) + 1) % SPEEDS.length];
+      store.set('replay', replay);
+      if (this.playing) this.setPlaying(true);
+    });
+    $('.to-live', this.el).addEventListener('click', () => this.endReplay());
+  }
+
+  kick() {
+    clearTimeout(this.timer);
+    this.timer = null;
+    if (this.gone) return;
+    if (this.video) return this.startVideo();
+    if (!this.inflight) this.run();
+  }
+
+  stop() {
+    clearTimeout(this.timer);
+    this.timer = null;
+    if (this.video) this.stopVideo();
+  }
+
+  dispose() {
+    this.disposed = true;
+    this.stop();
+    this.endReplay();
+    for (const old of this.footage) URL.revokeObjectURL(old.url);
+    if (this.unkept) URL.revokeObjectURL(this.unkept);
+    this.footage = [];
+    this.unkept = null;
+    this.el.remove();
+  }
+
+  // ---- video ----
+
+  startVideo() {
+    if (this.media) return;
+    const mjpeg = this.info.video === 'mjpeg';
+    const media = document.createElement(mjpeg ? 'img' : 'video');
+    this.media = media;
+    this.view.replaceChildren(media);
+    const ok = () => { this.shownAt = Date.now(); this.failures = 0; };
+    const fail = (why) => { this.failures = 2; this.error = why; };
+    if (mjpeg) {
+      media.onload = ok;
+      media.onerror = () => fail('No video from the camera');
+      media.src = `/mjpeg/${enc(this.key)}`;
+      return;
+    }
+    Object.assign(media, { muted: true, autoplay: true, playsInline: true });
+    media.addEventListener('playing', ok);
+    const url = `/hls/${enc(this.key)}/index.m3u8`;
+    if (window.Hls?.isSupported()) {
+      this.player = new Hls({ liveDurationInfinity: true, lowLatencyMode: false });
+      this.player.loadSource(url);
+      this.player.attachMedia(media);
+      this.player.on(Hls.Events.ERROR, (_, data) => {
+        if (!data.fatal) return;
+        fail('No video from the camera');
+        this.stopVideo();
+        this.timer = setTimeout(() => { if (running && !this.disposed) this.startVideo(); }, 15000);
+      });
+    } else if (media.canPlayType('application/vnd.apple.mpegurl')) {
+      media.src = url;
+      media.addEventListener('error', () => fail('No video from the camera'));
+    } else fail('This browser can\'t play this video');
+  }
+
+  stopVideo() {
+    this.player?.destroy();
+    this.player = null;
+    if (this.media) {
+      this.media.removeAttribute('src');
+      this.media.load?.();
+      this.media.remove();
+      this.media = null;
+    }
+  }
+
+  // ---- pictures ----
+
+  async run() {
+    this.inflight = true;
+    try {
+      await this.check();
+    } finally {
+      this.inflight = false;
+    }
+    if (running && !this.disposed) this.timer = setTimeout(() => this.run(), this.delay(Date.now()));
+  }
+
+  // Sleep until just before the next frame is due, then watch closely until it shows up.
+  delay(now) {
+    if (this.failures) return Math.min(MAX_WAIT, 1000 * 2 ** this.failures);
+    if (this.longPoll) return 0;
+    if (!this.period) return LEARN_POLL;
+    if (this.arrival === null) return FAST_POLL;
+    const due = this.arrival + this.period;
+    if (now < due - LEAD) return Math.min(MAX_WAIT, due - LEAD - now);
+    if (now < due + this.period) return FAST_POLL;
+    return Math.min(Math.max(this.period / 4, FAST_POLL), 5000);
+  }
+
+  async check() {
+    const sentAt = Date.now();
+    try {
+      const headers = this.etag ? { 'If-None-Match': this.etag } : {};
+      const res = await fetch(`/cam/${enc(this.key)}`, { cache: 'no-store', headers });
+      this.noteServerDate(res, sentAt, Date.now());
+      this.longPoll = res.headers.has('X-Long-Poll');
+      if (res.status !== 304) {
+        if (!res.ok) throw new Error((await res.text()).slice(0, 80) || `The app answered ${res.status}`);
+        const etag = res.headers.get('ETag');
+        const frameTime = Number(res.headers.get('X-Frame-Time')) || null;  // (Last-Modified has whole seconds)
+        if (etag !== this.etag) await this.accept(await res.blob(), etag, res.headers.get('Last-Modified'), sentAt, frameTime);
+      }
+      this.lastCheck = sentAt;
+      this.failures = 0;
+    } catch (err) {
+      this.failures++;
+      this.error = err.message;
+      this.lastCheck = null;
+    }
+  }
+
+  // Camera-server clock minus ours, so frame ages are measured on the clock that stamped the frame.
+  noteServerDate(res, sentAt, gotAt) {
+    const date = Date.parse(res.headers.get('Date'));
+    if (Number.isNaN(date)) return;
+    this.skews.push(date + 500 - (sentAt + gotAt) / 2);  // Date is truncated to the second
+    if (this.skews.length > 15) this.skews.shift();
+    this.skew = median(this.skews);
+  }
+
+  async accept(blob, etag, modified, sentAt, frameTime = null) {
+    if (this.disposed) return;
+    const url = URL.createObjectURL(blob);
+    try {
+      await this.present(url);
+    } catch {
+      URL.revokeObjectURL(url);
+      throw new Error('Received a picture that would not decode');
+    }
+    if (this.disposed) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    // The frame appeared upstream between the previous check and this one. If those were close together that pins
+    // down the camera's timing; otherwise re-sync on the next frame.
+    const pinned = this.shownAt !== null && this.lastCheck !== null && sentAt - this.lastCheck <= PRECISE_GAP;
+    this.arrival = pinned ? (this.lastCheck + sentAt) / 2 : null;
+    this.etag = etag;
+    const stamped = frameTime ?? (modified ? Date.parse(modified) : NaN);
+    this.lastModified = Number.isNaN(stamped) ? null : stamped;
+    this.shownAt = Date.now();
+    this.stamps.push(this.lastModified ?? sentAt);
+    if (this.stamps.length > HISTORY) this.stamps.shift();
+    this.period = estimatePeriod(this.stamps) ?? this.period;
+
+    if (this.unkept) URL.revokeObjectURL(this.unkept);
+    this.unkept = null;
+    const at = this.lastModified ?? this.shownAt;
+    if (this.footage.length && at - this.footage.at(-1).at < FOOTAGE_STEP) this.unkept = url;
+    else this.remember(url, at);
+  }
+
+  async present(url) {
+    const probe = new Image();
+    probe.src = url;
+    await probe.decode();
+    this.img.src = url;
+    this.dot.classList.remove('pulse');
+    void this.dot.offsetWidth;  // restart the animation
+    this.dot.classList.add('pulse');
+  }
+
+  remember(url, at) {
+    this.footage.push({ url, at });
+    while (this.footage.length > 1 && at - this.footage[0].at > BUFFER_MS) URL.revokeObjectURL(this.footage.shift().url);
+  }
+
+  // ---- replay: a time-lapse of stored frames, ending back at the live view ----
+
+  startReplay() {
+    const newest = this.footage.at(-1);
+    if (this.footage.length < 2) return;
+    const from = newest.at - replay.window * 1000;
+    this.replaying = true;
+    this.el.dataset.replay = '';
+    this.show(this.footage.find((f) => f.at >= from));
+    this.setPlaying(true);
+  }
+
+  endReplay() {
+    clearTimeout(this.playTimer);
+    this.replaying = this.playing = false;
+    this.cursor = null;
+    delete this.el.dataset.replay;
+    this.replayImg.removeAttribute('src');
+  }
+
+  show(frame) {
+    this.cursor = frame;
+    this.replayImg.src = frame.url;
+  }
+
+  setPlaying(on) {
+    clearTimeout(this.playTimer);
+    this.playing = on;
+    if (!on) return;
+    const next = this.footage[this.footage.indexOf(this.cursor) + 1];
+    const gap = next ? Math.min(next.at - this.cursor.at, MAX_GAP_HOLD) : 0;
+    this.playTimer = setTimeout(() => this.advance(), Math.max(50, gap / replay.speed));
+  }
+
+  advance() {
+    const next = this.footage[this.footage.indexOf(this.cursor) + 1];
+    if (!next || next === this.footage.at(-1)) return this.endReplay();  // caught up with live
+    this.show(next);
+    this.setPlaying(true);
+  }
+
+  scrubTo(seconds) {
+    if (this.footage.length < 2) return;
+    const target = this.footage.at(-1).at + seconds * 1000;
+    const frame = this.footage.findLast((f) => f.at <= target) ?? this.footage[0];
+    if (frame === this.footage.at(-1)) return this.endReplay();
+    this.replaying = true;
+    this.el.dataset.replay = '';
+    this.show(frame);
+    this.setPlaying(false);
+  }
+
+  say(text) {
+    this.toast.textContent = text;
+    this.toast.hidden = false;
+    clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => { this.toast.hidden = true; }, 4000);
+  }
+
+  // ---- scroll-zoom and drag ----
+
+  fit() {
+    const { clientWidth: w, clientHeight: h } = this.el;
+    const media = this.media ?? this.img;
+    const iw = media.naturalWidth || media.videoWidth || 16, ih = media.naturalHeight || media.videoHeight || 9;
+    const s = settings.fit === 'cover' ? Math.max(w / iw, h / ih) : Math.min(w / iw, h / ih);
+    return { w, h, pw: iw * s, ph: ih * s };
+  }
+
+  clampPan() {
+    const { w, h, pw, ph } = this.fit();
+    if (!w || !h) return;
+    const maxX = Math.max(0, (this.mag * pw - w) / 2) / w;
+    const maxY = Math.max(0, (this.mag * ph - h) / 2) / h;
+    this.panX = Math.min(maxX, Math.max(-maxX, this.panX));
+    this.panY = Math.min(maxY, Math.max(-maxY, this.panY));
+  }
+
+  onWheel(event) {
+    if (event.target.closest('.controls')) return;
+    event.preventDefault();
+    const px = event.deltaMode === 1 ? 16 : 1;
+    const factor = Math.exp(-event.deltaY * px * (event.ctrlKey ? 0.01 : 0.0015));
+    const box = this.el.getBoundingClientRect();
+    this.zoomAbout(factor, event.clientX - box.left - box.width / 2, event.clientY - box.top - box.height / 2);
+  }
+
+  zoomAbout(factor, cx, cy) {
+    const { w, h } = this.fit();
+    let mag = Math.min(MAX_MAG, Math.max(1, this.mag * factor));
+    if (mag < 1.02) mag = 1;
+    const k = mag / this.mag;
+    this.panX = (cx - k * (cx - this.panX * w)) / w;
+    this.panY = (cy - k * (cy - this.panY * h)) / h;
+    this.mag = mag;
+    this.clampPan();
+    saveView(this);
+  }
+
+  onDrag(event) {
+    if (!this.drag) return;
+    const dx = event.clientX - this.drag.x, dy = event.clientY - this.drag.y;
+    if (!this.drag.moved && Math.hypot(dx, dy) < 4) return;
+    this.drag = { x: event.clientX, y: event.clientY, moved: true };
+    this.el.classList.add('dragging');
+    this.panX += dx / this.el.clientWidth;
+    this.panY += dy / this.el.clientHeight;
+    this.clampPan();
+  }
+
+  state(now) {
+    if (this.gone) return 'gone';
+    if (this.failures >= 2) return 'error';
+    if (this.shownAt === null) return 'connecting';
+    if (this.video) return 'video';
+    // (stale: no new picture for 8 of its periods, or, before its period is known, 5 minutes: many cameras take 2–5)
+    if (now - this.shownAt > (this.period ? Math.max(60000, 8 * this.period) : 300000)) return 'stale';
+    if (!this.period) return 'detecting';
+    if (this.arrival === null) return 'syncing';
+    if (now > this.arrival + this.period + Math.max(2000, this.period / 2)) return 'late';
+    return 'live';
+  }
+
+  render(now) {
+    const state = this.state(now);
+    if (this.el.dataset.state !== state) this.el.dataset.state = state;
+
+    let badge = LABELS[state];
+    if (this.replaying) badge = `Replay · −${formatAge(now + this.skew - this.cursor.at)}`;
+    else if (state === 'error') badge += ` · ${this.error}`;
+    else if (this.video) badge = LABELS.video;
+    else if (this.lastModified !== null) badge += ` · ${formatAge(now + this.skew - this.lastModified)} old`;
+    else if (this.shownAt !== null) badge += ` · ${formatAge(now - this.shownAt)} ago`;
+    setText(this.label, badge);
+
+    let progress = 0;
+    if (!this.video && (state === 'live' || state === 'late') && this.period >= 1000) progress = (now - this.arrival) / this.period;
+    this.bar.style.transform = `scaleX(${Math.min(1, Math.max(0, progress))})`;
+
+    let transform = '';
+    if (this.mag > 1) {
+      this.clampPan();
+      const { w, h } = this.fit();
+      transform = `translate(${this.panX * w}px, ${this.panY * h}px) scale(${this.mag})`;
+    }
+    if (this.view.style.transform !== transform) this.view.style.transform = transform;
+    this.el.classList.toggle('magnified', this.mag > 1);
+    this.renderControls(now);
+  }
+
+  renderControls(now) {
+    setText(this.zoomBtn, `🔍 ${this.mag > 1 ? this.mag.toFixed(1) : 1}×`);
+    if (this.video || this.gone) {
+      setText(this.when, this.gone ? '' : this.info.video === 'mjpeg' ? 'Live video (MJPEG)' : 'Live video');
+      return;
+    }
+    const oldest = this.footage[0], newest = this.footage.at(-1);
+    const stored = newest ? newest.at - oldest.at : 0;
+    const min = String(-Math.min(replay.window * 1000, stored) / 1000);
+    if (this.scrub.min !== min) this.scrub.min = min;
+    this.scrub.disabled = this.footage.length < 2;
+    const value = String(this.replaying ? (this.cursor.at - newest.at) / 1000 : 0);
+    if (this.scrub.value !== value) this.scrub.value = value;
+
+    let when;
+    if (this.replaying) when = `−${formatAge(now + this.skew - this.cursor.at)} · ${timeFmt.format(this.cursor.at)}`;
+    else if (this.footage.length < 2) when = 'Collecting footage…';
+    else {
+      const rate = !this.period ? '' : this.period < 1000 ? ` · ${Math.round(1000 / this.period)} fps`
+        : ` · every ${(this.period / 1000).toFixed(1)} s`;
+      when = `Live · ${formatAge(stored)} stored${rate}`;
+    }
+    setText(this.when, when);
+    setText(this.playBtn, this.playing ? '❚❚' : '▶︎');
+    setText(this.speedBtn, `${replay.speed}×`);
+    for (const btn of this.windowBtns) btn.classList.toggle('on', Number(btn.dataset.window) === replay.window);
+  }
+}
+
+const grid = $('#grid');
+
+// Show a set: its cameras in its order. Cameras it shares with the set before keep their footage.
+function showSet(id) {
+  const set = setup.sets.find((s) => s.id === id) ?? setup.sets[0];
+  if (!set) return;
+  setId = set.id;
+  store.set('set', setId);
+  const before = new Map(cams.map((cam) => [cam.key, cam]));
+  cams = set.cameras.filter((key) => setup.cameras[key]).map((key) => {
+    const info = setup.cameras[key];
+    const cam = before.get(key);
+    if (cam && cam.name === info.name && cam.gone === Boolean(info.gone)) {
+      before.delete(key);
+      return cam;
+    }
+    return new Camera(key, info);
+  });
+  for (const cam of before.values()) cam.dispose();
+  if (!cams.includes(zoomed)) zoomed = null;
+  grid.replaceChildren(...cams.map((cam) => cam.el));
+  $('#empty').hidden = cams.length > 0;
+  $('#empty a').href = `/cameras.html#set=${setId}`;
+  document.title = `${set.name} · camwall`;
+  layout();
+  renderBlackWhite();
+  renderSets();
+  if (running) for (const cam of cams) if (!cam.timer && !cam.inflight) cam.kick();
+}
+
+// A camera switched between pictures and video starts again as the other.
+function replaceCamera(old) {
+  const cam = new Camera(old.key, old.info);
+  cams[cams.indexOf(old)] = cam;
+  if (zoomed === old) zoomed = cam;
+  old.el.replaceWith(cam.el);
+  old.dispose();
+  layout();
+  renderBlackWhite();
+  if (running) cam.kick();
+}
+
+function renderSets() {
+  const nav = $('.sets');
+  const buttons = setup.sets.length < 2 ? [] : setup.sets.map((set, i) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = set.name;
+    button.title = `${set.cameras.length} camera${set.cameras.length === 1 ? '' : 's'}${i < 9 ? ` (${i + 1})` : ''}`;
+    button.classList.toggle('on', set.id === setId);
+    button.addEventListener('click', () => showSet(set.id));
+    return button;
+  });
+  const edit = document.createElement('a');
+  edit.className = 'edit';
+  edit.href = `/cameras.html#set=${setId}`;
+  edit.textContent = '✎ Cameras';
+  edit.title = 'Choose this wall\'s cameras and what they alert for, or make another wall (c)';
+  nav.replaceChildren(...buttons, edit);
+}
+
+async function pollSetup() {
+  try {
+    const [res, state] = await Promise.all([fetch('/api/setup', { cache: 'no-store' }), fetch('/api/state', { cache: 'no-store' })]);
+    if (state.ok) applySettings((await state.json()).settings);
+    if (!res.ok) throw new Error();
+    $('#problem').hidden = true;
+    const text = await res.text();
+    if (text === setupText) return;
+    setupText = text;
+    setup = JSON.parse(text);
+    showSet(setId);
+    scheduleCycle();
+  } catch {
+    $('#problem').textContent = 'camwall isn\'t answering. Is it still running? The wall carries on when it\'s back.';
+    $('#problem').hidden = false;
+  }
+}
+
+// Walls switch by themselves every settings.cycle s (not while one camera fills the screen or is replaying).
+let cycleTimer = null;
+function scheduleCycle() {
+  clearTimeout(cycleTimer);
+  if (!settings.cycle || setup.sets.length < 2) return;
+  cycleTimer = setTimeout(() => {
+    if (!zoomed && !cams.some((cam) => cam.replaying) && $('#drawer').hidden) {
+      const i = setup.sets.findIndex((s) => s.id === setId);
+      showSet(setup.sets[(i + 1) % setup.sets.length].id);
+    }
+    scheduleCycle();
+  }, settings.cycle * 1000);
+}
+
+function applySettings(next) {
+  const fitChanged = next.fit !== settings.fit;
+  const cycleChanged = next.cycle !== settings.cycle;
+  settings = next;
+  if (cycleChanged) scheduleCycle();
+  document.documentElement.style.setProperty('--fit', settings.fit === 'cover' ? 'cover' : 'contain');
+  document.body.classList.toggle('no-labels', !settings.labels);
+  $('.mute').hidden = !settings.detector;
+  $('.bell').hidden = !settings.detector && !alerts.length;
+  setText($('.mute'), settings.muted ? '🔇 Muted' : '🔊 Sound on');
+  $('.mute').classList.toggle('on', settings.muted);
+  if (fitChanged) for (const cam of cams) { cam.mag = 1; cam.panX = cam.panY = 0; }
+}
+
+async function mute(on) {
+  try {
+    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ muted: on }) });
+    if (res.ok) applySettings(await res.json());
+  } catch {}
+}
+
+// Pick the column count that shows the most picture for the current screen shape. A short last row is stretched
+// to the full width, so the grid has cols × last tracks and tiles span to fit.
+function layout() {
+  for (const cam of cams) {
+    cam.el.hidden = zoomed !== null && cam !== zoomed;
+    if (cam.el.hidden) cam.endReplay();
+  }
+  grid.classList.toggle('zoomed', zoomed !== null);
+  const tiles = cams.filter((cam) => !cam.el.hidden);
+  const n = tiles.length;
+  if (!n) return;
+  const { clientWidth: w, clientHeight: h } = grid;
+  const picture = (tw, th) => Math.min(tw, th * TILE_ASPECT) * Math.min(th, tw / TILE_ASPECT);
+  let best = { area: 0 };
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols), last = n - (rows - 1) * cols;
+    const area = (n - last) * picture(w / cols, h / rows) + last * picture(w / last, h / rows);
+    if (area > best.area) best = { area, cols, rows, last };
+  }
+  grid.style.gridTemplateColumns = `repeat(${best.cols * best.last}, 1fr)`;
+  grid.style.gridTemplateRows = `repeat(${best.rows}, 1fr)`;
+  tiles.forEach((cam, i) => {
+    cam.el.style.gridColumn = `span ${i >= n - best.last ? best.cols : best.last}`;
+  });
+}
+
+function renderBlackWhite() {
+  for (const cam of cams) {
+    cam.el.classList.toggle('bw', blackWhite.has(cam.key));
+    cam.bwBtn.classList.toggle('on', blackWhite.has(cam.key));
+  }
+  $('.bw-all').classList.toggle('on', cams.length > 0 && cams.every((cam) => blackWhite.has(cam.key)));
+}
+
+function toggleAllBlackWhite() {
+  setBlackWhite(cams.map((cam) => cam.key), !cams.every((cam) => blackWhite.has(cam.key)));
+}
+
+function toggleZoom(cam) {
+  zoomed = zoomed ? null : cam;
+  layout();
+}
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  // Keyboard lock lets a tap of Esc reach the page in full screen (hold Esc to leave full screen).
+  else document.documentElement.requestFullscreen?.().then(() => navigator.keyboard?.lock?.(['Escape'])).catch(() => {});
+}
+
+// Stop checking while the tab is hidden; on return, re-sync since the timing may have drifted.
+function updateRunning() {
+  const should = !document.hidden;
+  if (should === running) return;
+  running = should;
+  for (const cam of cams) {
+    if (running) {
+      cam.arrival = null;
+      cam.lastCheck = null;
+      cam.kick();
+    } else {
+      cam.stop();
+    }
+  }
+}
+
+let cursorTimer;
+function wakeCursor() {
+  document.body.classList.remove('idle');
+  clearTimeout(cursorTimer);
+  cursorTimer = setTimeout(() => document.body.classList.add('idle'), CURSOR_HIDE);
+}
+
+// Esc: every tile back to live and the pointer and controls hidden.
+function allLive() {
+  if (!$('#help').hidden) return void ($('#help').hidden = true);
+  if (!$('#drawer').hidden) return void ($('#drawer').hidden = true);
+  $('#alert').hidden = true;
+  const replaying = cams.some((cam) => cam.replaying);
+  for (const cam of cams) cam.endReplay();
+  clearTimeout(cursorTimer);
+  document.body.classList.add('idle');
+  if (!replaying && zoomed) toggleZoom(zoomed);
+}
+
+addEventListener('resize', layout);
+addEventListener('mousemove', wakeCursor);
+addEventListener('pointerdown', wakeCursor);  // (a tap, on a touch screen)
+addEventListener('keydown', (event) => {
+  if (event.metaKey || event.ctrlKey || event.altKey) return;  // leave browser shortcuts alone
+  if (event.key === 'f') toggleFullscreen();
+  else if (event.key === 'b') toggleAllBlackWhite();
+  else if (event.key === 'm' && settings.detector) mute(!settings.muted);
+  else if (event.key === 'c') location.href = `/cameras.html#set=${setId}`;
+  else if (event.key === 's') location.href = '/settings.html';
+  else if (event.key === '?') $('#help').hidden = !$('#help').hidden;
+  else if (event.key === 'a') toggleDrawer();
+  else if (/^[1-9]$/.test(event.key) && setup.sets[event.key - 1]) showSet(setup.sets[event.key - 1].id);
+  else if (event.key === 'Escape') allLive();
+});
+$('.bw-all').addEventListener('click', toggleAllBlackWhite);
+$('.full').addEventListener('click', toggleFullscreen);
+$('.keys').addEventListener('click', () => { $('#help').hidden = false; });
+$('#help').addEventListener('click', () => { $('#help').hidden = true; });
+$('.mute').addEventListener('click', () => mute(!settings.muted));
+document.addEventListener('visibilitychange', updateRunning);
+
+// ---- the detector's alerts: a banner, the camera outlined, and the list of recent ones ----
+
+let lastAlert = null;   // id of the newest alert seen (null until the first check: older ones aren't announced)
+let alerts = [];
+let alertTimer = null;
+const KIND_ICON = { police: '🚓', ambulance: '🚑', fire: '🚒' };
+const snapshotUrl = (a, crop = false) => `/alerts/${a.snapshot.split('/').map(enc).join('/').replace(/\.jpg$/, crop ? '.crop.jpg' : '.jpg')}`;
+
+async function pollAlerts() {
+  try {
+    const res = await fetch(`/api/alerts?after=${lastAlert ?? 0}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const fresh = (await res.json()).alerts;
+    const announce = lastAlert !== null;
+    if (fresh.length) {
+      alerts = [...alerts, ...fresh].slice(-50);
+      lastAlert = fresh.at(-1).id;
+    } else if (lastAlert === null) lastAlert = 0;
+    if (announce) for (const a of fresh) showAlert(a);
+    $('.bell').hidden = !settings.detector && !alerts.length;
+    if (!$('#drawer').hidden) renderDrawer();
+  } catch {}
+}
+
+function showAlert(a) {
+  const box = $('#alert');
+  box.dataset.kind = a.kind;
+  box.replaceChildren(Object.assign(document.createElement('img'), { src: snapshotUrl(a, true), alt: '' }),
+    Object.assign(document.createElement('div'), { innerHTML: '' }));
+  const text = box.lastChild;
+  text.append(Object.assign(document.createElement('b'), { textContent: `${KIND_ICON[a.kind] ?? ''} ${a.message}` }),
+    Object.assign(document.createElement('span'), { textContent: `${timeFmt.format(a.at * 1000)} · click to see it` }));
+  box.hidden = false;
+  box.onclick = () => {
+    box.hidden = true;
+    const cam = cams.find((c) => c.key === a.key);
+    if (cam && zoomed !== cam) toggleZoom(cam);
+    else open(snapshotUrl(a), '_blank');
+  };
+  const cam = cams.find((c) => c.key === a.key);
+  if (cam) {
+    cam.el.dataset.kind = a.kind;
+    cam.el.classList.add('alerting');
+    setTimeout(() => cam.el.classList.remove('alerting'), ALERT_SHOWN);
+  }
+  clearTimeout(alertTimer);
+  alertTimer = setTimeout(() => { box.hidden = true; }, ALERT_SHOWN);
+}
+
+function renderDrawer() {
+  const list = $('#drawer ol');
+  if (!alerts.length) return list.replaceChildren(Object.assign(document.createElement('li'), { className: 'none',
+    textContent: settings.detector ? 'None yet. Give cameras alerts on the Cameras page.' : 'Alerts are off (Settings).' }));
+  list.replaceChildren(...[...alerts].reverse().map((a) => {
+    const li = document.createElement('li');
+    const link = Object.assign(document.createElement('a'), { href: snapshotUrl(a), target: '_blank' });
+    link.append(Object.assign(document.createElement('img'), { src: snapshotUrl(a, true), alt: '', loading: 'lazy' }));
+    const text = document.createElement('div');
+    const marks = document.createElement('div');
+    marks.className = 'marks';
+    for (const [v, label] of [['real', '✓ Real'], ['wrong', '✗ Wrong']]) {
+      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: label, title: v === 'real'
+        ? `It was ${KIND_HELP[a.kind]}` : `It wasn't ${KIND_HELP[a.kind]}` });
+      b.dataset.v = v;
+      b.classList.toggle('on', a.mark === v);
+      b.addEventListener('click', () => markAlert(a, a.mark === v ? null : v));
+      marks.append(b);
+    }
+    text.append(Object.assign(document.createElement('b'), { textContent: `${KIND_ICON[a.kind] ?? ''} ${a.message}` }),
+      Object.assign(document.createElement('span'), { textContent: new Date(a.at * 1000).toLocaleString() }), marks);
+    li.append(link, text);
+    return li;
+  }));
+}
+
+const KIND_HELP = { police: 'a police vehicle', ambulance: 'an ambulance', fire: 'a fire truck' };
+
+async function markAlert(a, verdict) {
+  try {
+    const res = await fetch('/api/alerts/mark', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ snapshot: a.snapshot, verdict }) });
+    if (res.ok) a.mark = verdict;
+  } catch {}
+  renderDrawer();
+}
+
+function toggleDrawer() {
+  $('#drawer').hidden = !$('#drawer').hidden;
+  if (!$('#drawer').hidden) renderDrawer();
+}
+$('.bell').addEventListener('click', toggleDrawer);
+$('#drawer h2 button').addEventListener('click', toggleDrawer);
+
+function frame() {
+  const now = Date.now();
+  for (const cam of cams) cam.render(now);
+  requestAnimationFrame(frame);
+}
+
+(async () => {
+  try {
+    const state = await (await fetch('/api/state', { cache: 'no-store' })).json();
+    if (state.welcome) return void location.replace('/welcome.html');
+    applySettings(state.settings);
+  } catch {}
+  wakeCursor();
+  requestAnimationFrame(frame);
+  await pollSetup();
+  updateRunning();
+  setInterval(pollSetup, SETUP_POLL);
+  pollAlerts();
+  setInterval(pollAlerts, ALERT_POLL);
+})();
+</script>
+</body>
+</html>

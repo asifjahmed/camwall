@@ -1,0 +1,35 @@
+# Once a week, which camera sources still give their cameras. Sources whose terms restrict apps are left out,
+# and so are those whose robots.txt asks crawlers (as this check is) to leave their list alone.
+# A failure here can be a source blocking GitHub's servers rather than a broken source: check it from a home
+# connection with `python3 -m sources.check <module>` before changing it.
+name: Camera sources
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Check the sources
+        run: python -m sources.check --all --crawler --media 2 --no-save | tee check.txt
+        continue-on-error: true
+      - name: Summary
+        run: |
+          {
+            echo "## Camera sources"
+            echo
+            echo "$(grep -c '^ok' check.txt || true) working, $(grep -c '^FAIL' check.txt || true) failing."
+            echo "A failure from GitHub's servers can be a block on datacenter addresses: check it from home first."
+            echo
+            echo '```'
+            grep -E '^FAIL' check.txt || echo "(none)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · camwall</title>
+<link rel="icon" href="/icon.svg">
+<link rel="stylesheet" href="/app.css">
+<style>
+  main { width: min(920px, 100%); margin: 0 auto; padding: 24px 16px 60px; display: grid; gap: 18px; }
+  h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.02em; }
+  .section { padding: 18px 20px; }
+  .section h2 { margin: 0 0 2px; font-size: 17px; }
+  .section > p { margin: 0 0 14px; color: var(--muted); }
+  .rows { display: grid; gap: 14px; }
+  .setting { display: grid; grid-template-columns: minmax(160px, 220px) 1fr; gap: 6px 18px; align-items: center; }
+  .setting > span:first-child { font-weight: 500; }
+  .setting .hint { grid-column: 2; color: var(--muted); font-size: 12px; margin-top: -2px; }
+  .inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .setting .segmented, .setting .switch { justify-self: start; }
+  .inline .suggest { flex: 1 1 240px; }
+  .quiet input[type="time"] { width: auto; padding: 5px 8px; }
+
+  .sources-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .sources-tools .field { width: auto; flex: 1 1 200px; }
+  .totals { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+  .state-group { margin-top: 14px; }
+  .state-group h3 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .source { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 12px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; }
+  .source .name { font-weight: 600; }
+  .source .sub { color: var(--muted); font-size: 12px; }
+  .source .terms { grid-column: 2 / 4; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--warn) 14%, transparent); font-size: 12px; }
+  .source .terms q { font-style: italic; }
+  .source .keyrow { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .source .keyrow .field { width: auto; flex: 1 1 200px; padding: 5px 9px; font-family: var(--mono); font-size: 12px; }
+  .source .err { grid-column: 2 / 4; color: var(--bad); font-size: 12px; }
+  .source .credit { grid-column: 2 / 4; font-size: 12px; }
+  .source .credit p { white-space: pre-line; color: var(--muted); margin: 4px 0 0; }
+  .source.off .name, .source.off .sub:first-of-type { opacity: 0.6; }
+  .badge { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; vertical-align: 1px; }
+  .badge.warn { background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); }
+  .badge.key { background: var(--accent-soft); color: var(--accent); }
+  #detector-log { margin: 6px 0 0; max-height: 180px; overflow: auto; padding: 8px 10px; border-radius: 8px; background: var(--raised); font: 11px/1.45 var(--mono); white-space: pre-wrap; }
+  code { font: 12px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--raised); word-break: break-all; }
+  @media (max-width: 640px) {
+    .setting { grid-template-columns: 1fr; }
+    .setting .hint { grid-column: 1; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Settings</h1>
+
+  <section class="card section" id="location">
+    <h2>Where you are</h2>
+    <p>For finding cameras near you and how far away they are. It stays on this computer.</p>
+    <div class="rows">
+      <div class="setting"><span>Home</span>
+        <div class="inline"><div><input class="field" id="home" autocomplete="off" placeholder="ZIP code, town or county"></div>
+          <button class="btn" type="button" id="locate">📍 Use my location</button></div>
+      </div>
+      <div class="setting"><span>Distances in</span><div class="segmented" data-setting="units"></div></div>
+    </div>
+  </section>
+
+  <section class="card section">
+    <h2>Look</h2>
+    <p>How camwall's pages and the wall look.</p>
+    <div class="rows">
+      <div class="setting"><span>Theme</span><div class="segmented" data-setting="theme"></div></div>
+      <div class="setting"><span>Pictures on the wall</span><div class="segmented" data-setting="fit"></div>
+        <span class="hint">“Whole picture” shows all of each camera's view; “Fill the tile” crops it to leave no black bars.</span></div>
+      <div class="setting"><span>Camera names on the wall</span><label class="switch"><input type="checkbox" data-flag="labels">Show</label></div>
+      <div class="setting"><span>Switch walls by themselves</span><div class="segmented" data-setting="cycle"></div>
+        <span class="hint">For a screen left showing them: the wall moves on to the next of your walls after this long.</span></div>
+    </div>
+  </section>
+
+  <section class="card section" id="map">
+    <h2>Map</h2>
+    <p>The map on the Cameras page uses OpenStreetMap's tiles unless you set another provider here. OpenStreetMap's
+      servers are for light use; many map providers give a free key for personal use, in a tile address like
+      <code>https://…/{z}/{x}/{y}.png?key=…</code>.</p>
+    <div class="rows">
+      <div class="setting"><span>Tile address</span>
+        <input class="field" id="tiles-url" autocomplete="off" spellcheck="false" placeholder="https://tile.openstreetmap.org/{z}/{x}/{y}.png"></div>
+      <div class="setting"><span>Credit</span>
+        <input class="field" id="tiles-credit" autocomplete="off" placeholder="© OpenStreetMap contributors">
+        <span class="hint">As the provider's terms ask it to be shown on the map.</span></div>
+      <div class="setting"><span>Credit links to</span>
+        <input class="field" id="tiles-link" autocomplete="off" spellcheck="false" placeholder="https://… (optional)"></div>
+      <div class="inline"><button class="btn primary" type="button" id="tiles-save">Use this provider</button>
+        <button class="btn" type="button" id="tiles-osm">Back to OpenStreetMap</button></div>
+    </div>
+  </section>
+
+  <section class="card section">
+    <h2>Alerts</h2>
+    <p>camwall's detector watches the cameras you've given alerts (on the Cameras page) for police cars, ambulances and fire trucks.</p>
+    <div class="rows">
+      <div class="setting"><span>Detector</span><label class="switch"><input type="checkbox" data-flag="detector">Watch cameras for alerts</label>
+        <span class="hint" id="detector-hint"></span></div>
+      <div class="setting"><span>Status</span><div class="inline" id="detector-status"></div>
+        <pre class="hint" id="detector-log" hidden></pre></div>
+      <div class="setting"><span>Power saver</span><label class="switch"><input type="checkbox" data-flag="power_saver">Lighter watching, for a laptop on battery</label></div>
+      <div class="setting"><span>When a camera sees one</span>
+        <div class="rows" style="gap: 10px">
+          <label class="switch"><input type="checkbox" data-flag="sound">A chime</label>
+          <label class="switch"><input type="checkbox" data-flag="voice">Say what it saw, and where</label>
+          <label class="switch"><input type="checkbox" data-flag="desktop">A notification on this computer</label>
+          <label class="switch"><input type="checkbox" data-flag="muted">Muted for now (notifications only)</label>
+        </div>
+      </div>
+      <div class="setting quiet"><span>Quiet hours</span>
+        <div class="inline"><label class="switch"><input type="checkbox" id="quiet">No sound from</label>
+          <input class="field" type="time" id="quiet-from" value="22:00" aria-label="Quiet from"> to
+          <input class="field" type="time" id="quiet-to" value="07:00" aria-label="Quiet until"></div></div>
+    </div>
+  </section>
+
+  <section class="card section" id="sources">
+    <h2>Camera sources</h2>
+    <p>Where camwall's cameras come from: state transportation departments, cities, toll roads and others. Each source's
+      list is fetched again daily on this computer for the sources you use. Some ask apps like this one not to use
+      their cameras, or need a key of your own; those are off until you turn them on.</p>
+    <div class="sources-tools">
+      <input class="field" id="source-search" type="search" placeholder="Filter by state or name">
+      <div class="segmented" id="source-filter">
+        <button type="button" data-filter="all" aria-pressed="true">All</button>
+        <button type="button" data-filter="off" aria-pressed="false">Off</button>
+        <button type="button" data-filter="issues" aria-pressed="false">Need attention</button>
+      </div>
+    </div>
+    <p class="totals" id="totals"></p>
+    <div id="source-list"></div>
+  </section>
+
+  <section class="card section" id="network">
+    <h2>Phones and tablets</h2>
+    <p>Watch your walls on a phone, tablet or TV browser on the same Wi-Fi. Each device is let in once, with a code
+      from this page. (The connection isn't encrypted, so use this on a network you trust.)</p>
+    <div class="rows">
+      <div class="setting"><span>On this network</span><label class="switch"><input type="checkbox" data-flag="network">Let devices pair with camwall</label></div>
+      <div class="setting" id="network-how" hidden><span>On the device, open</span><div id="network-urls" class="inline"></div></div>
+      <div class="setting" id="network-pair" hidden><span>Pairing</span><div class="inline">
+        <button class="btn small" type="button" id="new-code">Pair a device</button>
+        <span id="code-shown" class="muted"></span></div></div>
+      <div class="setting" id="network-devices" hidden><span>Paired devices</span><div id="device-list" class="rows" style="gap: 6px"></div></div>
+    </div>
+  </section>
+
+  <section class="card section">
+    <h2>About and privacy</h2>
+    <div class="rows">
+      <p style="margin: 0">camwall runs only on this computer. It has no account and sends nothing about you anywhere:
+        it fetches camera lists and pictures straight from the agencies that publish them, and map tiles from
+        OpenStreetMap or the provider set above. Your settings and walls are kept in <code id="data-dir"></code>.</p>
+      <p style="margin: 0" class="muted small">Camera pictures belong to the agencies that publish them; see each source's
+        site and terms above. Where an agency asks for credit or a disclaimer, it's shown with its cameras and its source. Map data © OpenStreetMap contributors. Town and ZIP code locations: US Census Bureau.
+        <span id="version"></span></p>
+      <div class="inline">
+        <label class="switch"><input type="checkbox" id="login">Start camwall when I log in to this computer</label></div>
+      <div class="inline"><a class="btn" href="/welcome.html">Run the welcome again</a>
+        <button class="btn danger" type="button" id="quit">Quit camwall</button></div>
+    </div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+<script>
+topbar('settings', el('span', { className: 'saved muted small', id: 'saved' }));
+
+const CHOICES = {
+  units: [['mi', 'Miles'], ['km', 'Kilometres']],
+  theme: [['auto', 'As the system'], ['light', 'Light'], ['dark', 'Dark']],
+  fit: [['contain', 'Whole picture'], ['cover', 'Fill the tile']],
+  cycle: [[0, 'Off'], [15, '15 s'], [30, '30 s'], [60, '1 min'], [120, '2 min'], [300, '5 min']],
+};
+let settings = null;
+let sources = [];
+let filter = 'all';
+
+async function change(values, note = 'Saved') {
+  try {
+    settings = await api('/api/settings', values);
+    applyTheme(settings.theme);
+    render();
+    $('#saved').textContent = note;
+    setTimeout(() => { $('#saved').textContent = ''; }, 2000);
+  } catch (err) {
+    toast(`Couldn't save: ${err.message}`);
+  }
+}
+
+function render() {
+  for (const box of $$('[data-setting]')) {
+    const name = box.dataset.setting;
+    box.replaceChildren(...CHOICES[name].map(([value, label]) => {
+      const b = el('button', { type: 'button', textContent: label, ariaPressed: String(settings[name] === value) });
+      b.addEventListener('click', () => change({ [name]: value }));
+      return b;
+    }));
+  }
+  for (const box of $$('[data-flag]')) box.checked = settings[box.dataset.flag];
+  for (const box of $$('[data-flag="sound"], [data-flag="voice"], [data-flag="desktop"], [data-flag="muted"], [data-flag="power_saver"]')) box.disabled = !settings.detector;
+  $('#quiet').checked = Boolean(settings.quiet);
+  if (settings.quiet) { $('#quiet-from').value = settings.quiet.from; $('#quiet-to').value = settings.quiet.to; }
+  if (document.activeElement !== $('#home')) $('#home').value = settings.home?.label ?? '';
+  if (!$('#map').contains(document.activeElement)) {
+    $('#tiles-url').value = settings.tiles?.url ?? '';
+    $('#tiles-credit').value = settings.tiles?.credit ?? '';
+    $('#tiles-link').value = settings.tiles?.link ?? '';
+  }
+  $('#detector-hint').textContent = settings.detector ? 'The Cameras page shows how much of this computer it takes.' : 'Off: no alerts, and none of this computer used for them.';
+}
+
+for (const box of $$('[data-flag]')) box.addEventListener('change', () => change({ [box.dataset.flag]: box.checked }));
+const quiet = () => change({ quiet: $('#quiet').checked ? { from: $('#quiet-from').value, to: $('#quiet-to').value } : null });
+for (const id of ['#quiet', '#quiet-from', '#quiet-to']) $(id).addEventListener('change', quiet);
+
+$('#tiles-save').addEventListener('click', () => {
+  const url = $('#tiles-url').value.trim(), credit = $('#tiles-credit').value.trim(), link = $('#tiles-link').value.trim();
+  if (!/^https:\/\/.*\{z\}.*\{x\}.*\{y\}/.test(url)) return toast('The tile address needs https:// and {z}, {x} and {y}');
+  if (!credit) return toast('Give the credit the provider asks for');
+  change({ tiles: { url, credit, link: link || null } }, 'Saved: the map uses this provider');
+});
+$('#tiles-osm').addEventListener('click', () => change({ tiles: null }, 'Saved: the map uses OpenStreetMap'));
+
+placeSearch($('#home'), (p) => change({ home: { label: p.short, lat: p.lat, lon: p.lon, state: p.state } }, `Home is ${p.short}`));
+$('#locate').addEventListener('click', async () => {
+  try {
+    const at = await locate();
+    const place = await placeAt(at.lat, at.lon);
+    change({ home: { label: place.label, lat: at.lat, lon: at.lon, state: place.state } }, `Home is ${place.label}`);
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+// ---- the detector ----
+
+let detectorTimer = null;
+async function loadDetector() {
+  clearTimeout(detectorTimer);
+  let d;
+  try { d = await api('/api/detector'); } catch { return; }
+  const box = $('#detector-status');
+  const parts = [];
+  const installing = d.installing && !d.installing.done;
+  if (installing) parts.push(el('span', { textContent: `Setting up: ${d.installing.step}…` }));
+  else if (!d.installed) {
+    const install = el('button', { type: 'button', className: 'btn primary small', textContent: 'Set up the detector' });
+    install.addEventListener('click', async () => {
+      if (!confirm('This downloads the detector\'s libraries and models (about 1–2 GB) and installs them in camwall\'s folder. Go ahead?')) return;
+      await api('/api/detector/install', {});
+      loadDetector();
+    });
+    parts.push(el('span', { className: 'muted', textContent: 'Not set up on this computer yet. ' }), install);
+    if (d.installing?.failed) parts.push(el('span', { className: 'small', style: 'color: var(--bad)', textContent: `Last try failed: ${d.installing.failed}` }));
+  } else if (d.running) parts.push(el('span', { textContent: '● Running', style: 'color: var(--good); font-weight: 600' }));
+  else if (!settings.detector) parts.push(el('span', { className: 'muted', textContent: 'Off' }));
+  else if (!d.wanted) parts.push(el('span', { className: 'muted', textContent: 'Waiting: no camera has alerts yet (give some on the Cameras page)' }));
+  else parts.push(el('span', { className: 'muted', textContent: d.error ?? 'Starting…' }));
+  const test = el('button', { type: 'button', className: 'btn small', textContent: '🔔 Test alert' });
+  test.addEventListener('click', () => api('/api/detector/test', {}).then(() => toast('A test alert, as your settings have it')));
+  const showLog = el('button', { type: 'button', className: 'btn small quiet', textContent: $('#detector-log').hidden ? 'Show log' : 'Hide log' });
+  showLog.addEventListener('click', () => { $('#detector-log').hidden = !$('#detector-log').hidden; loadDetector(); });
+  box.replaceChildren(...parts, test, showLog);
+  $('#detector-log').textContent = (installing || d.installing?.failed ? d.installing.lines : d.log).join('\n') || 'Nothing yet.';
+  detectorTimer = setTimeout(loadDetector, installing ? 1500 : 5000);
+}
+
+// ---- phones and tablets, starting at login, quitting ----
+
+let codeTimer = null;
+async function loadNetwork() {
+  let n;
+  try { n = await api('/api/network'); } catch { return; }
+  $('#login').checked = n.login;
+  for (const id of ['#network-how', '#network-pair', '#network-devices']) $(id).hidden = !n.on;
+  const urls = [`http://${n.hostname}:${n.port}/`, ...n.addresses.map((a) => `http://${a}:${n.port}/`)];
+  $('#network-urls').replaceChildren(...urls.map((u) => el('code', { textContent: u })));
+  $('#device-list').replaceChildren(...(n.devices.length ? n.devices.map((d) => {
+    const remove = el('button', { type: 'button', className: 'btn small quiet danger', textContent: 'Remove' });
+    remove.addEventListener('click', async () => { await api('/api/devices/remove', { id: d.id }); loadNetwork(); });
+    return el('div', { className: 'inline' }, el('span', { textContent: d.name }),
+      el('span', { className: 'muted small', textContent: `paired ${new Date(d.paired * 1000).toLocaleDateString()}, last seen ${new Date(d.seen * 1000).toLocaleString()}` }), remove);
+  }) : [el('span', { className: 'muted', textContent: 'None yet.' })]));
+}
+$('#new-code').addEventListener('click', async () => {
+  const { code, seconds } = await api('/api/network/code', {});
+  clearTimeout(codeTimer);
+  $('#code-shown').replaceChildren('Type ', el('b', { textContent: code, style: 'font: 600 18px var(--mono); letter-spacing: 0.15em' }),
+    ` on the device within ${seconds / 60} minutes.`);
+  codeTimer = setTimeout(() => { $('#code-shown').textContent = 'That code has run out.'; loadNetwork(); }, seconds * 1000);
+  setTimeout(loadNetwork, 15000);
+});
+$('[data-flag="network"]').addEventListener('change', () => setTimeout(loadNetwork, 500));
+$('#login').addEventListener('change', async () => {
+  try {
+    await api('/api/login', { on: $('#login').checked });
+    toast($('#login').checked ? 'camwall will start when you log in' : 'camwall won\'t start by itself');
+  } catch (err) { toast(`Couldn't change that: ${err.message}`); }
+});
+$('#quit').addEventListener('click', async () => {
+  if (!confirm('Quit camwall? The wall and alerts stop until it\'s started again.')) return;
+  await api('/api/quit', {}).catch(() => {});
+  document.body.replaceChildren(el('main', { style: 'padding: 40px 16px; text-align: center' },
+    el('h1', { textContent: 'camwall has stopped' }), el('p', { className: 'muted', textContent: 'Start it again from your Applications, or with python3 camwall.py.' })));
+});
+
+// ---- sources ----
+
+function ago(iso) {
+  if (!iso) return 'never';
+  const s = (Date.now() - Date.parse(iso)) / 1000;
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min ago`;
+  if (s < 172800) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+
+function renderSources() {
+  const q = $('#source-search').value.trim().toLowerCase();
+  const states = (s) => (Array.isArray(s.state) ? s.state : [s.state]);
+  const shown = sources.filter((s) => {
+    if (filter === 'off' && s.on) return false;
+    if (filter === 'issues' && !(s.error || (s.needs_key && !s.has_key) || (s.restricted && !s.on))) return false;
+    if (!q) return true;
+    return `${s.name} ${s.covers} ${s.module} ${states(s).map((st) => `${st} ${STATE_NAMES[st] ?? ''}`).join(' ')}`.toLowerCase().includes(q);
+  });
+  const on = sources.filter((s) => s.on);
+  $('#totals').textContent = `${sources.length} sources in ${new Set(sources.flatMap(states)).size} states · ${on.length} on · `
+    + `${on.reduce((n, s) => n + s.cameras, 0).toLocaleString()} cameras from the ones that are on`;
+  const byState = new Map();
+  for (const s of shown) {
+    const st = states(s)[0];
+    if (!byState.has(st)) byState.set(st, []);
+    byState.get(st).push(s);
+  }
+  const groups = [...byState].sort(([a], [b]) => (STATE_NAMES[a] ?? a).localeCompare(STATE_NAMES[b] ?? b));
+  $('#source-list').replaceChildren(...(groups.length ? groups.map(([st, list]) => el('div', { className: 'state-group' },
+    el('h3', { textContent: STATE_NAMES[st] ?? st }), ...list.map(sourceRow))) : [el('p', { className: 'muted', textContent: 'No sources match.' })]));
+}
+
+function sourceRow(s) {
+  const keyless = !s.on && s.needs_key && !s.has_key;  // (one that's on can always be turned off)
+  const withdrawn = s.withdrawn != null;  // (its agency asked camwall to stop using it: off whatever is chosen)
+  const toggle = el('input', { type: 'checkbox', checked: s.on, disabled: Boolean(keyless) || withdrawn,
+    ariaLabel: `Use ${s.name}`,
+    title: withdrawn ? 'Withdrawn at its agency\'s request' : keyless ? 'Add its key first' : s.on ? 'Turn off' : 'Turn on' });
+  toggle.addEventListener('change', async () => {
+    if (toggle.checked && s.restricted && !confirm(`${s.name}'s terms say:\n\n${s.restricted}\n\nTurn it on anyway, for your own use?`)) {
+      toggle.checked = false;
+      return;
+    }
+    await change({ sources: { [s.module]: toggle.checked } }, toggle.checked ? `${s.name} on` : `${s.name} off`);
+    loadSources();
+  });
+  const refresh = el('button', { type: 'button', className: 'btn small quiet', textContent: s.fetching ? 'Fetching…' : '↻ Fetch now', disabled: s.fetching || !s.on || (s.needs_key && !s.has_key),
+    title: s.on ? '' : 'Turn it on first' });
+  refresh.addEventListener('click', async () => {
+    await api('/api/refresh', { module: s.module });
+    toast(`Fetching ${s.name}'s list…`);
+    setTimeout(loadSources, 1500);
+  });
+  const extra = [];
+  if (withdrawn) extra.push(el('div', { className: 'terms' }, el('b', { textContent: 'Withdrawn: ' }),
+    s.withdrawn || 'its agency asked camwall to stop using its cameras.'));
+  if (s.restricted) extra.push(el('div', { className: 'terms' }, el('b', { textContent: 'Its terms: ' }), el('q', { textContent: s.restricted }),
+    s.terms ? el('span', {}, ' ', el('a', { href: s.terms, target: '_blank', rel: 'noopener', textContent: 'Read them' })) : null));
+  if (s.credit) extra.push(el('div', { className: 'credit' }, el('b', { textContent: 'Credit: ' }), s.credit,
+    s.disclaimer ? el('details', {}, el('summary', { textContent: 'Its disclaimer' }), el('p', { textContent: s.disclaimer })) : null));
+  if (s.needs_key) {
+    const input = el('input', { className: 'field', type: 'password', placeholder: s.has_key ? 'Key saved (type a new one to replace it)' : 'Paste your key', autocomplete: 'off' });
+    const saveKey = el('button', { type: 'button', className: 'btn small', textContent: 'Save key' });
+    saveKey.addEventListener('click', async () => {
+      if (!input.value.trim()) return;
+      try {
+        await api('/api/key', { module: s.module, key: input.value.trim() });
+        await change({ sources: { [s.module]: true } }, 'Key saved');
+        await api('/api/refresh', { module: s.module });
+        loadSources();
+      } catch (err) { toast(`Key not saved: ${err.message}`); }
+    });
+    const forget = el('button', { type: 'button', className: 'btn small quiet', textContent: 'Forget key', hidden: !s.has_key });
+    forget.addEventListener('click', async () => { await api('/api/key', { module: s.module, key: null }); loadSources(); });
+    const how = /https?:\/\/\S+/.exec(s.needs_key)?.[0];
+    extra.push(el('div', { className: 'keyrow' }, input, saveKey, forget,
+      el('span', { className: 'sub' }, 'Get a free key: ', how ? el('a', { href: how, target: '_blank', rel: 'noopener', textContent: s.needs_key }) : s.needs_key)));
+  }
+  if (s.error) extra.push(el('div', { className: 'err', textContent: `Last fetch failed: ${s.error}` }));
+  const badges = [withdrawn ? el('span', { className: 'badge warn', textContent: 'withdrawn' }) : null,
+    s.restricted ? el('span', { className: 'badge warn', textContent: 'restrictive terms' }) : null,
+    s.needs_key ? el('span', { className: 'badge key', textContent: s.has_key ? 'key saved' : 'needs a key' }) : null];
+  return el('div', { className: `source${s.on ? '' : ' off'}` },
+    el('label', { className: 'switch' }, toggle),
+    el('div', {}, el('div', {}, el('a', { className: 'name', href: s.site, target: '_blank', rel: 'noopener', textContent: s.name }), ...badges.filter(Boolean)),
+      el('div', { className: 'sub', textContent: s.covers }),
+      el('div', { className: 'sub', textContent: `${s.cameras.toLocaleString()} cameras · list ${s.origin === 'fetched' ? `fetched ${ago(s.fetched)}` : s.fetched ? `from ${new Date(s.fetched).toLocaleDateString()}` : 'not fetched yet'}` })),
+    refresh, ...extra);
+}
+
+async function loadSources() {
+  try { sources = await api('/api/sources'); } catch { return; }
+  renderSources();
+}
+
+$('#source-search').addEventListener('input', renderSources);
+for (const b of $$('#source-filter button')) b.addEventListener('click', () => {
+  filter = b.dataset.filter;
+  for (const x of $$('#source-filter button')) x.setAttribute('aria-pressed', String(x === b));
+  renderSources();
+});
+
+(async () => {
+  try {
+    const state = await api('/api/state');
+    settings = state.settings;
+    applyTheme(settings.theme);
+    $('#data-dir').textContent = state.data ?? '';
+    $('#version').textContent = `camwall ${state.version}.`;
+    render();
+    loadPlaces();
+    loadSources();
+    loadDetector();
+    loadNetwork();
+    if (location.hash) document.querySelector(location.hash)?.scrollIntoView();
+  } catch (err) {
+    toast(`camwall isn't answering (${err.message}). Is it still running?`, 8000);
+  }
+})();
+</script>
+</body>
+</html>

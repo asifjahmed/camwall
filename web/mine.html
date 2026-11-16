@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My cameras · camwall</title>
+<link rel="icon" href="/icon.svg">
+<link rel="stylesheet" href="/app.css">
+<style>
+  main { width: min(1040px, 100%); margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.02em; }
+  .lead { margin: 0 0 20px; color: var(--muted); max-width: 720px; }
+  .head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+  .cam { overflow: hidden; }
+  .cam .picture { border-radius: 0; }
+  .cam .body { padding: 10px 12px 12px; display: grid; gap: 4px; }
+  .cam .name { font-weight: 600; }
+  .cam .sub { color: var(--muted); font-size: 12px; word-break: break-all; }
+  .cam .err { color: var(--bad); font-size: 12px; }
+  .cam .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .empty { padding: 40px 20px; text-align: center; color: var(--muted); }
+
+  .panel { margin-top: 20px; padding: 20px; }
+  .panel h2 { margin: 0 0 4px; font-size: 18px; }
+  .panel > p { margin: 0 0 16px; color: var(--muted); }
+  .ways { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .way { text-align: left; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); display: grid; gap: 4px; }
+  .way:hover { border-color: var(--accent); }
+  .way b { font-size: 15px; }
+  .way span { color: var(--muted); font-size: 13px; }
+  .brands h3 { margin: 16px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .brand-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .found { display: grid; gap: 8px; }
+  .found .row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+  form { display: grid; gap: 14px; max-width: 720px; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  label.f { display: grid; gap: 4px; font-weight: 500; font-size: 13px; }
+  label.f small { font-weight: normal; color: var(--muted); }
+  .note { padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); font-size: 13px; }
+  .test { display: grid; grid-template-columns: minmax(200px, 360px) 1fr; gap: 14px; align-items: start; }
+  .test .msg { font-size: 13px; }
+  .test .msg.bad { color: var(--bad); }
+  .test .msg.good { color: var(--good); }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  @media (max-width: 640px) { .test { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="head">
+    <div>
+      <h1>My cameras</h1>
+      <p class="lead">Your own cameras at home or at your business, on your walls next to the public ones, with the same
+        alerts. Their passwords stay in this computer's keychain, and their video goes nowhere but your own screens.</p>
+    </div>
+    <button class="btn primary" type="button" id="add">+ Add a camera</button>
+  </div>
+
+  <section class="card panel" id="panel" hidden></section>
+  <div class="grid" id="list"></div>
+</main>
+
+<script src="/app.js"></script>
+<script>
+topbar('mine');
+
+let state = null;     // { cameras, brands, home }
+let setup = null;
+const thumbs = [];
+
+async function load() {
+  [state, setup] = await Promise.all([api('/api/mine'), api('/api/setup')]);
+  render();
+}
+
+// ---- the cameras ----
+
+function render() {
+  for (const t of thumbs.splice(0)) t.stop();
+  if (!state.cameras.length) {
+    $('#list').replaceChildren(el('div', { className: 'card empty' },
+      el('p', { textContent: 'No cameras of your own yet.' }),
+      el('p', { className: 'small', textContent: 'IP cameras and recorders (Reolink, Hikvision, Amcrest, Axis, Tapo, Eufy…), and hubs that bring in others (Home Assistant, Frigate, Scrypted, Blue Iris, UniFi Protect) all work.' })));
+    return;
+  }
+  $('#list').replaceChildren(...state.cameras.map((cam) => {
+    const key = `mine/${cam.id}`;
+    const view = preview({ key, name: cam.name, media: 1 }, { every: 4000 });
+    thumbs.push(view);
+    const edit = el('button', { type: 'button', className: 'btn small', textContent: 'Edit' });
+    edit.addEventListener('click', () => showForm(cam));
+    const recorded = cam.record ? el('button', { type: 'button', className: 'btn small', textContent: '⏺ Recordings' }) : null;
+    recorded?.addEventListener('click', () => showRecordings(cam));
+    const remove = el('button', { type: 'button', className: 'btn small quiet danger', textContent: 'Remove' });
+    remove.addEventListener('click', async () => {
+      if (!confirm(`Remove ${cam.name}? Its password is forgotten too.`)) return;
+      state = await api('/api/mine/delete', { id: cam.id });
+      render();
+    });
+    const walls = setup.sets.filter((s) => !s.cameras.includes(key));
+    const onWalls = setup.sets.filter((s) => s.cameras.includes(key)).map((s) => s.name);
+    const put = el('select', { className: 'field', style: 'width: auto; padding: 3px 8px; font-size: 13px', hidden: !walls.length },
+      el('option', { value: '', textContent: 'Put on a wall…' }), ...walls.map((s) => el('option', { value: s.id, textContent: s.name })));
+    put.addEventListener('change', async () => {
+      if (!put.value) return;
+      await addToWall(key, put.value);
+      render();
+    });
+    return el('article', { className: 'card cam' }, view.node,
+      el('div', { className: 'body' },
+        el('span', { className: 'name', textContent: cam.name }),
+        el('span', { className: 'sub', textContent: `${cam.kind.toUpperCase()} · ${hostOf(cam.url)}${cam.username ? ` · as ${cam.username}` : ''}${cam.tunnel ? ' · tunnel when away' : ''}` }),
+        el('span', { className: 'sub', textContent: (onWalls.length ? `On ${onWalls.join(', ')}` : 'Not on a wall yet')
+          + (cam.record ? ` · recording, kept ${cam.record < 24 ? `${cam.record} hours` : `${cam.record / 24} day${cam.record > 24 ? 's' : ''}`}${cam.sound ? ', with sound' : ''}` : '') }),
+        cam.error ? el('span', { className: 'err', textContent: cam.error }) : null,
+        el('div', { className: 'actions' }, edit, recorded, put, remove)));
+  }));
+}
+
+const hostOf = (url) => { try { return new URL(url.replace(/^rtsps?:/, 'http:')).host; } catch { return url; } };
+
+async function addToWall(key, setId) {
+  const set = setup.sets.find((s) => s.id === setId);
+  if (!set || set.cameras.includes(key)) return;
+  set.cameras.push(key);
+  setup = await api('/api/setup', { sets: setup.sets, alerts: setup.alerts });
+  toast(`On ${set.name}`);
+}
+
+// ---- adding one: three ways in ----
+
+function panel(...children) {
+  $('#panel').hidden = false;
+  $('#panel').replaceChildren(...children);
+  $('#panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function closePanel() {
+  $('#panel').hidden = true;
+  $('#panel').replaceChildren();
+}
+
+function cancel(text = 'Cancel') {
+  const b = el('button', { type: 'button', className: 'btn quiet', textContent: text });
+  b.addEventListener('click', closePanel);
+  return b;
+}
+
+function chooseWay() {
+  const way = (title, text, action) => {
+    const b = el('button', { type: 'button', className: 'way' }, el('b', { textContent: title }), el('span', { textContent: text }));
+    b.addEventListener('click', action);
+    return b;
+  };
+  panel(el('h2', { textContent: 'Add a camera' }), el('p', { textContent: 'How would you like to find it?' }),
+    el('div', { className: 'ways' },
+      way('🔎 Find it on my network', 'Look for cameras that speak ONVIF (most IP cameras do).', discover),
+      way('🏷 Pick its brand', 'Reolink, Hikvision, Amcrest, Tapo, Eufy, Wyze… or a hub like Home Assistant.', chooseBrand),
+      way('🔗 Paste its address', 'An rtsp://, MJPEG, snapshot or .m3u8 address you already have.', () => showForm({ kind: 'rtsp' }))),
+    el('div', { className: 'actions', style: 'margin-top: 14px' }, cancel()));
+}
+
+async function discover() {
+  panel(el('h2', { textContent: 'Looking for cameras…' }), el('p', { textContent: 'Asking this network for ONVIF cameras (a few seconds).' }));
+  let found = [];
+  try { found = (await api('/api/mine/discover', {})).found; } catch (err) { toast(err.message); }
+  const back = el('button', { type: 'button', className: 'btn', textContent: '← Other ways' });
+  back.addEventListener('click', chooseWay);
+  if (!found.length) {
+    return panel(el('h2', { textContent: 'No cameras answered' }),
+      el('p', { textContent: 'Some cameras need ONVIF turned on in their own app first, and some (Eufy, Wyze, Ring, Nest, Arlo) don\'t speak it at all. Try picking the brand instead.' }),
+      el('div', { className: 'actions' }, back, cancel()));
+  }
+  panel(el('h2', { textContent: `${found.length} camera${found.length === 1 ? '' : 's'} found` }),
+    el('p', { textContent: 'Choose one, then give its username and password to read its streams.' }),
+    el('div', { className: 'found' }, ...found.map((cam) => {
+      const use = el('button', { type: 'button', className: 'btn small primary', textContent: 'Use this' });
+      use.addEventListener('click', () => onvifLogin(cam));
+      return el('div', { className: 'row' }, el('div', {},
+        el('b', { textContent: [cam.maker, cam.model].filter(Boolean).join(' ') || cam.name || 'A camera' }),
+        el('div', { className: 'small muted', textContent: `${cam.address}${cam.name ? ` · ${cam.name}` : ''}` })), use);
+    })),
+    el('div', { className: 'actions', style: 'margin-top: 14px' }, back, cancel()));
+}
+
+function onvifLogin(cam) {
+  const user = el('input', { className: 'field', value: 'admin', autocomplete: 'off' });
+  const pass = el('input', { className: 'field', type: 'password', autocomplete: 'new-password' });
+  const msg = el('p', { className: 'small', style: 'color: var(--bad); margin: 0' });
+  const go = el('button', { type: 'submit', className: 'btn primary', textContent: 'Read its streams' });
+  const form = el('form', {}, el('div', { className: 'fields' }, el('label', { className: 'f' }, 'Username', user),
+    el('label', { className: 'f' }, 'Password', pass)), msg, el('div', { className: 'actions' }, go, cancel()));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    go.disabled = true;
+    msg.textContent = '';
+    try {
+      const info = await api('/api/mine/onvif', { address: cam.address, port: cam.port, service: cam.service, username: user.value, password: pass.value });
+      if (!info.profiles.length) throw new Error('It gave no streams');
+      const best = info.profiles[0];
+      showForm({ kind: 'rtsp', url: best.rtsp, username: user.value, password: pass.value,
+        name: [info.maker, info.model].filter(Boolean).join(' ') || 'Camera', profiles: info.profiles });
+    } catch (err) {
+      msg.textContent = err.message;
+      go.disabled = false;
+    }
+  });
+  panel(el('h2', { textContent: [cam.maker, cam.model].filter(Boolean).join(' ') || cam.address }),
+    el('p', { textContent: `Its login (often on a sticker, or set in its own app).` }), form);
+}
+
+function chooseBrand() {
+  const groups = { camera: 'Cameras and recorders', hub: 'Hubs (they bring in Ring, Nest, Arlo, Blink and others)', other: 'Anything else' };
+  const back = el('button', { type: 'button', className: 'btn', textContent: '← Other ways' });
+  back.addEventListener('click', chooseWay);
+  panel(el('h2', { textContent: 'Pick its brand' }), el('div', { className: 'brands' }, ...Object.entries(groups).flatMap(([group, title]) => [
+    el('h3', { textContent: title }),
+    el('div', { className: 'brand-list' }, ...state.brands.filter((b) => b.group === group).map((b) => {
+      const button = el('button', { type: 'button', className: 'btn', textContent: b.name });
+      button.addEventListener('click', () => brandForm(b));
+      return button;
+    }))])), el('div', { className: 'actions', style: 'margin-top: 14px' }, back, cancel()));
+}
+
+// The fields a brand's address needs ({channel}, {name}, {entity}, {token}), then the camera form with it filled in.
+function brandForm(brand) {
+  const needs = [...new Set((brand.path + brand.sub).match(/\{(\w+)/g)?.map((m) => m.slice(1)) ?? [])];
+  if (!brand.path) return showForm({ kind: brand.kind, brand: brand.id, note: brand.notes, name: brand.name });
+  const host = el('input', { className: 'field', placeholder: '192.168.1.50', required: true });
+  const port = el('input', { className: 'field', type: 'number', value: brand.port || '', min: 1, max: 65535 });
+  const extra = Object.fromEntries(needs.map((n) => [n, el('input', { className: 'field', required: true,
+    value: n === 'channel' ? '1' : '', placeholder: { name: 'front_door', entity: 'camera.front_door', token: 'from its RTSP page' }[n] ?? '' })]));
+  const stream = el('select', { className: 'field' }, el('option', { value: 'path', textContent: 'Main stream (best picture)' }),
+    el('option', { value: 'sub', textContent: 'Sub stream (lighter: better for many cameras)' }));
+  const go = el('button', { type: 'submit', className: 'btn primary', textContent: 'Next' });
+  const form = el('form', {},
+    brand.notes ? el('div', { className: 'note', textContent: brand.notes }) : null,
+    el('div', { className: 'fields' },
+      el('label', { className: 'f' }, 'Its address on your network', host),
+      el('label', { className: 'f' }, 'Port', port),
+      ...needs.map((n) => el('label', { className: 'f' }, { channel: 'Channel', name: 'Camera name', entity: 'Entity', token: 'Stream token' }[n], extra[n])),
+      brand.sub !== brand.path ? el('label', { className: 'f' }, 'Stream', stream) : null),
+    el('div', { className: 'actions' }, go, cancel()));
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(needs.map((n) => [n, extra[n].value.trim()]));
+    const path = brand[stream.value].replace(/\{(\w+)(?::0?(\d)d)?\}/g, (_, n, width) =>
+      width ? values[n].padStart(Number(width), '0') : (n === 'channel' ? values[n] : encodeURI(values[n])));
+    const scheme = brand.scheme ?? { rtsp: 'rtsp', mjpeg: 'http', snapshot: 'http', hls: 'http' }[brand.kind];
+    const url = `${scheme}://${host.value.trim()}${port.value ? `:${port.value}` : ''}${path}`;
+    showForm({ kind: brand.kind, url, brand: brand.id, username: brand.user, bearer: Boolean(brand.token),
+      name: `${brand.name.split(' /')[0]} camera`, note: brand.token ? brand.notes : null });
+  });
+  panel(el('h2', { textContent: brand.name }), el('p', { textContent: 'Where it is on your network.' }), form);
+}
+
+// ---- the camera form: name, address, login, place; test; save ----
+
+function showForm(cam) {
+  const editing = Boolean(cam.id);
+  const name = el('input', { className: 'field', value: cam.name ?? '', maxLength: 60, required: true, placeholder: 'Front door' });
+  const kind = el('select', { className: 'field' }, ...[['rtsp', 'RTSP video'], ['mjpeg', 'MJPEG stream'], ['snapshot', 'Snapshot picture'], ['hls', 'HLS video']]
+    .map(([v, t]) => el('option', { value: v, textContent: t, selected: v === cam.kind })));
+  const url = el('input', { className: 'field', value: cam.url ?? '', required: true, placeholder: 'rtsp://192.168.1.50:554/stream1', style: 'font-family: var(--mono); font-size: 13px' });
+  const user = el('input', { className: 'field', value: cam.username ?? '', autocomplete: 'off' });
+  const pass = el('input', { className: 'field', type: 'password', autocomplete: 'new-password', value: cam.password ?? '',
+    placeholder: editing && cam.has_password ? 'Kept (type to change)' : '' });
+  const bearer = el('input', { type: 'checkbox', checked: Boolean(cam.bearer) });
+  const atHome = el('input', { type: 'checkbox', checked: cam.lat == null });
+  const lat = el('input', { className: 'field', type: 'number', step: 'any', value: cam.lat ?? '', placeholder: 'Latitude' });
+  const lon = el('input', { className: 'field', type: 'number', step: 'any', value: cam.lon ?? '', placeholder: 'Longitude' });
+  const place = el('div', { className: 'fields', hidden: atHome.checked }, lat, lon);
+  atHome.addEventListener('change', () => { place.hidden = atHome.checked; });
+  const tunnel = el('input', { className: 'field', value: cam.tunnel ?? '', placeholder: '127.0.0.1:1055', style: 'font-family: var(--mono); font-size: 13px' });
+  const record = el('select', { className: 'field', style: 'width: auto' }, ...[[0, 'Don\'t record'], [2, 'Keep 2 hours'], [6, 'Keep 6 hours'],
+    [24, 'Keep a day'], [72, 'Keep 3 days'], [168, 'Keep a week']].map(([v, t]) => el('option', { value: v, textContent: t, selected: v === (cam.record ?? 0) })));
+  const recordRow = el('label', { className: 'f' }, el('span', {}, 'Record it ', el('small', { textContent: '(about 0.5–2 GB an hour for a main stream; a sub stream takes less)' })), record);
+  const sound = el('input', { type: 'checkbox', checked: Boolean(cam.sound) });
+  const soundRow = el('label', { className: 'switch small' }, sound, 'Record its sound too (if it has a microphone; otherwise camwall never listens)');
+  const showRecord = () => {
+    recordRow.hidden = !['rtsp', 'hls'].includes(kind.value);
+    if (recordRow.hidden) record.value = '0';
+    soundRow.hidden = record.value === '0';
+  };
+  kind.addEventListener('change', showRecord);
+  record.addEventListener('change', showRecord);
+  const wall = el('select', { className: 'field', style: 'width: auto' }, el('option', { value: '', textContent: 'No wall for now' }),
+    ...setup.sets.map((s, i) => el('option', { value: s.id, textContent: s.name, selected: i === 0 })));
+  const profiles = cam.profiles?.length > 1 ? el('select', { className: 'field' }, ...cam.profiles.map((p, i) =>
+    el('option', { value: i, textContent: `${p.name}${p.width ? ` (${p.width}×${p.height})` : ''}` }))) : null;
+  profiles?.addEventListener('change', () => { url.value = cam.profiles[profiles.value].rtsp; });
+  const pic = el('div', { className: 'picture' }, el('div', { className: 'note', textContent: 'Test it to see its picture here' }));
+  const msg = el('div', { className: 'msg' });
+  const testBtn = el('button', { type: 'button', className: 'btn', textContent: '▶ Test' });
+  const save = el('button', { type: 'submit', className: 'btn primary', textContent: editing ? 'Save' : 'Add camera' });
+
+  const body = () => ({
+    ...(editing ? { id: cam.id } : {}), name: name.value.trim(), kind: kind.value, url: url.value.trim(), username: user.value.trim(),
+    password: pass.value || (editing ? null : ''), bearer: bearer.checked, brand: cam.brand ?? null, record: Number(record.value),
+    sound: sound.checked && Number(record.value) > 0, tunnel: tunnel.value.trim() || null,
+    lat: atHome.checked || lat.value === '' ? null : Number(lat.value), lon: atHome.checked || lon.value === '' ? null : Number(lon.value),
+  });
+  testBtn.addEventListener('click', async () => {
+    testBtn.disabled = true;
+    msg.className = 'msg';
+    msg.textContent = 'Connecting (up to 20 seconds)…';
+    try {
+      const result = await api('/api/mine/test', body());
+      if (result.ok) {
+        pic.replaceChildren(el('img', { src: `data:image/jpeg;base64,${result.jpeg}`, alt: '' }));
+        msg.className = 'msg good';
+        msg.textContent = '✓ It works.';
+      } else {
+        msg.className = 'msg bad';
+        msg.textContent = result.error;
+      }
+    } catch (err) {
+      msg.className = 'msg bad';
+      msg.textContent = err.message;
+    }
+    testBtn.disabled = false;
+  });
+  const form = el('form', {},
+    cam.note ? el('div', { className: 'note', textContent: cam.note }) : null,
+    el('div', { className: 'fields' }, el('label', { className: 'f' }, 'Name', name), el('label', { className: 'f' }, 'Kind', kind)),
+    profiles ? el('label', { className: 'f' }, 'Stream', profiles) : null,
+    el('label', { className: 'f' }, el('span', {}, 'Address ', el('small', { textContent: '(without the username and password)' })), url),
+    el('div', { className: 'fields' }, el('label', { className: 'f' }, 'Username', user), el('label', { className: 'f' }, 'Password', pass)),
+    el('label', { className: 'switch small' }, bearer, 'The password is an access token (Home Assistant)'),
+    el('label', { className: 'switch small' }, atHome, `It's at home${state.home ? ` (${state.home.label})` : ''}`), place,
+    recordRow, soundRow,
+    el('details', { open: Boolean(cam.tunnel) }, el('summary', { className: 'small', textContent: 'Away from home' }),
+      el('label', { className: 'f' }, el('span', {}, 'Tunnel ', el('small', { textContent: '(a SOCKS5 proxy, host:port, that reaches the camera\'s network, such as Tailscale\'s or ssh -D\'s; used when the camera doesn\'t answer directly)' })), tunnel)),
+    editing ? null : el('label', { className: 'f' }, 'Put it on', wall),
+    el('div', { className: 'test' }, pic, el('div', {}, testBtn, msg)),
+    el('div', { className: 'actions' }, save, cancel()));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    save.disabled = true;
+    try {
+      const saved = await api('/api/mine/save', body());
+      state = saved;
+      if (!editing && wall.value) await addToWall(`mine/${saved.camera.id}`, wall.value);
+      closePanel();
+      render();
+      toast(editing ? 'Saved' : `${saved.camera.name} added`);
+    } catch (err) {
+      toast(`Not saved: ${err.message}`);
+      save.disabled = false;
+    }
+  });
+  panel(el('h2', { textContent: editing ? `Edit ${cam.name}` : 'The camera' }),
+    el('p', { textContent: 'Test it before saving: the picture should show below.' }), form);
+  showRecord();
+}
+
+// ---- recordings: a camera's recorded minutes, played one after another ----
+
+async function showRecordings(cam) {
+  const { recordings } = await api(`/api/mine/recordings?id=${cam.id}`);
+  const video = el('video', { controls: true, playsInline: true, style: 'width: 100%; max-height: 60vh; background: #000; border-radius: 10px' });
+  const label = el('p', { className: 'small muted', textContent: recordings.length ? 'Choose a minute to play from; the next ones follow.' : '' });
+  let playing = -1;
+  const play = (i) => {
+    playing = i;
+    const r = recordings[i];
+    video.src = `/recordings/${cam.id}/${encodeURIComponent(r.file)}`;
+    video.play().catch(() => {});
+    label.textContent = `Playing ${new Date(r.start * 1000).toLocaleString()}`;
+    for (const b of $$('.minutes button')) b.classList.toggle('primary', Number(b.dataset.i) === i);
+  };
+  video.addEventListener('ended', () => { if (playing > 0) play(playing - 1); });  // (newest first: the next minute is before it)
+  const byHour = new Map();
+  recordings.forEach((r, i) => {
+    const d = new Date(r.start * 1000);
+    const hour = `${d.toLocaleDateString()} ${d.getHours()}:00`;
+    if (!byHour.has(hour)) byHour.set(hour, []);
+    byHour.get(hour).push(el('button', { type: 'button', className: 'btn small', textContent: `:${String(d.getMinutes()).padStart(2, '0')}`,
+      dataset: { i: String(i) }, onclick: () => play(i) }));
+  });
+  panel(el('h2', { textContent: `${cam.name}: recordings` }),
+    el('p', { textContent: recordings.length ? `${recordings.length} minutes kept (newest first).` : 'Nothing recorded yet: recording starts within a minute of turning it on.' }),
+    recordings.length ? video : null, label,
+    el('div', { className: 'minutes', style: 'display: grid; gap: 8px; max-height: 40vh; overflow-y: auto; margin-top: 10px' },
+      ...[...byHour].map(([hour, buttons]) => el('div', {}, el('div', { className: 'small muted', textContent: hour }),
+        el('div', { style: 'display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px' }, ...buttons)))),
+    el('div', { className: 'actions', style: 'margin-top: 14px' }, cancel('Close')));
+}
+
+$('#add').addEventListener('click', chooseWay);
+
+(async () => {
+  try {
+    const s = await api('/api/state');
+    applyTheme(s.settings.theme);
+    await load();
+  } catch (err) {
+    $('#list').replaceChildren(el('div', { className: 'card empty', textContent: `This page works on the computer running camwall (${err.message}).` }));
+  }
+})();
+</script>
+</body>
+</html>

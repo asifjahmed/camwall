@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pair with camwall</title>
+<link rel="icon" href="/icon.svg">
+<link rel="stylesheet" href="/app.css">
+<style>
+  body { min-height: 100vh; display: grid; place-content: center; padding: 16px; }
+  .card { width: min(420px, calc(100vw - 32px)); padding: 24px; }
+  h1 { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; font-size: 22px; }
+  h1 img { width: 30px; height: 30px; }
+  p { color: var(--muted); margin: 0 0 18px; }
+  form { display: grid; gap: 12px; }
+  label { display: grid; gap: 4px; font-weight: 500; }
+  #code { font: 600 26px/1 var(--mono); letter-spacing: 0.3em; text-align: center; padding: 12px; }
+  .bad { color: var(--bad); min-height: 1.4em; margin: 0; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1><img src="/icon.svg" alt="">camwall</h1>
+  <p>To watch your cameras on this device, open <b>Settings › Phones and tablets</b> on the computer running camwall,
+    press <b>Pair a device</b>, and type the code it shows.</p>
+  <form id="form">
+    <label>Code <input class="field" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}" required autofocus></label>
+    <label>Call this device <input class="field" id="name" maxlength="60" placeholder="Kitchen tablet"></label>
+    <button class="btn primary big" type="submit">Pair</button>
+    <p class="bad" id="problem"></p>
+  </form>
+</main>
+<script src="/app.js"></script>
+<script>
+$('#name').value = /iPhone|iPad|Android|Mac|Windows|Linux|CrOS/.exec(navigator.userAgent)?.[0] ?? '';
+$('#form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  $('#problem').textContent = '';
+  try {
+    await api('/api/pair', { code: $('#code').value.trim(), name: $('#name').value.trim() });
+    location.href = '/';
+  } catch (err) {
+    $('#problem').textContent = err.message;
+  }
+});
+</script>
+</body>
+</html>

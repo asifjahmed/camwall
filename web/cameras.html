@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cameras · camwall</title>
+<link rel="icon" href="/icon.svg">
+<link rel="stylesheet" href="/vendor/leaflet.css">
+<link rel="stylesheet" href="/app.css">
+<style>
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; }
+  .meter { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .meter .bar { width: 100px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+  .meter .bar i { display: block; height: 100%; width: 0; background: var(--good); transition: width 0.3s; }
+  .meter.warm .bar i { background: var(--warn); }
+  .meter.hot .bar i { background: var(--bad); }
+  .saved { color: var(--muted); font-size: 12px; min-width: 64px; text-align: right; }
+  .saved.bad { color: var(--bad); }
+
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(330px, 420px) 1fr; }
+  aside { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--surface); }
+  .walls { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 12px 0; }
+  .walls button { border: 1px solid var(--line); background: none; border-radius: 999px; padding: 3px 12px; white-space: nowrap; font-weight: 500; }
+  .walls button:hover { border-color: var(--faint); }
+  .walls button.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .walls .new { color: var(--muted); border-style: dashed; }
+  .wall-head { display: flex; gap: 8px; padding: 10px 12px 0; }
+  .wall-head input { flex: 1; min-width: 0; font-weight: 600; font-size: 15px; }
+  .modes { padding: 12px 12px 0; }
+  .modes .segmented { display: flex; }
+  .modes .segmented button { flex: 1; }
+  .find { display: grid; gap: 8px; padding: 10px 12px 0; }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .filters .chip[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+  .summary { margin: 8px 14px 4px; color: var(--muted); font-size: 12px; min-height: 1.5em; }
+  ol { list-style: none; margin: 0; padding: 0 6px 12px; overflow-y: auto; flex: 1; min-height: 0; }
+  .row { display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 2px 8px; padding: 8px 6px; border-radius: 8px; border: 1px solid transparent; }
+  .row:hover { background: var(--raised); }
+  .row.dragging { opacity: 0.4; }
+  .grip { color: var(--faint); cursor: grab; padding: 2px 2px 0; user-select: none; }
+  .row .info { min-width: 0; }
+  .row .name { display: block; max-width: 100%; padding: 0; border: 0; background: none; text-align: left; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .name:hover { text-decoration: underline; }
+  .sub { display: block; color: var(--muted); font-size: 12px; }
+  .row .remove { border: 0; background: none; color: var(--faint); padding: 2px 4px; }
+  .row .remove:hover { color: var(--text); }
+  .row .btn.in { color: var(--good); }
+  .row.place { grid-template-columns: auto 1fr; cursor: pointer; background: var(--accent-soft); margin-bottom: 4px; }
+  .row.place:hover { filter: brightness(1.05); }
+  .kinds { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .empty-list { padding: 18px 12px; color: var(--muted); }
+
+  .map-wrap { position: relative; min-height: 0; }
+  #map { position: absolute; inset: 0; }
+  .legend { padding: 6px 10px; border-radius: 8px; background: color-mix(in srgb, var(--surface) 88%, transparent); color: var(--muted); font-size: 12px; line-height: 1.7; box-shadow: var(--shadow); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  .popup { width: 300px; }
+  .popup strong { display: block; font-size: 14px; line-height: 1.3; }
+  .popup .picture { margin: 8px 0; }
+  .popup .actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .popup .source { margin-top: 8px; }
+  .popup .source a { color: var(--muted); }
+  .popup details { margin-top: 4px; color: var(--muted); font-size: 12px; }
+  .disclaimer { white-space: pre-line; max-height: 160px; overflow: auto; margin: 4px 0 0; }
+  .count-pill { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 500; padding: 4px 12px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 90%, transparent); box-shadow: var(--shadow); font-size: 12px; color: var(--muted); pointer-events: none; }
+
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 44vh 1fr; }
+    .map-wrap { grid-row: 1; }
+    aside { grid-row: 2; border-right: 0; border-top: 1px solid var(--line); }
+    .meter .bar { width: 60px; }
+    .popup { width: min(260px, 70vw); }
+  }
+</style>
+</head>
+<body>
+<main>
+  <aside>
+    <div class="walls" id="walls"></div>
+    <div class="wall-head">
+      <input class="field" id="wall-name" maxlength="40" aria-label="Wall name" title="This wall's name">
+      <button class="btn quiet danger" type="button" id="delete-wall" title="Delete this wall">Delete</button>
+    </div>
+    <div class="modes"><div class="segmented" id="modes">
+      <button type="button" data-mode="wall" aria-pressed="true">On this wall</button>
+      <button type="button" data-mode="find" aria-pressed="false">Find cameras</button>
+    </div></div>
+    <div class="find" id="find" hidden>
+      <div><input class="field" id="search" type="search" autocomplete="off" placeholder="Road, place or ZIP code  ( / )"></div>
+      <div class="filters">
+        <button class="chip" type="button" id="only-video" aria-pressed="false" title="Only cameras with live video">▶ Video only</button>
+        <button class="chip" type="button" id="near-me" aria-pressed="false" hidden title="Go back to where you live">📍 Near home</button>
+        <span class="small muted" id="find-hint">Move the map to list the cameras there.</span>
+      </div>
+    </div>
+    <p class="summary" id="summary"></p>
+    <ol id="list"></ol>
+  </aside>
+  <div class="map-wrap"><div id="map"></div><div class="count-pill" id="count-pill" hidden></div></div>
+</main>
+
+<script src="/vendor/leaflet.js"></script>
+<script src="/vendor/hls.min.js"></script>
+<script src="/app.js"></script>
+<script>
+const MAX_SET_CAMERAS = 64;   // as the server allows
+const MAX_SETS = 20;
+const RESULTS = 200;          // cameras listed at most
+const SAVE_DELAY = 400;       // ms of quiet before changes are saved
+const LOAD_POLL = 10_000;     // ms between checks of how busy the detector is
+const LOAD_STALE = 120;       // s: an older report means the detector isn't running
+const ESTIMATE = 0.03;        // a camera's share of the detector, until it's been measured
+
+const meter = el('div', { className: 'meter', id: 'meter', hidden: true, title: 'How much of this computer the detector takes. Near 100% it falls behind, and alerts come late.' },
+  el('span', { textContent: 'Detector' }), el('span', { className: 'bar' }, el('i')), el('span', { id: 'meter-text' }));
+topbar('cameras', meter, el('span', { className: 'saved', id: 'saved' }));
+
+let cameras = [];            // every camera: { key, name, lat, lon, media, state, online }
+let byKey = new Map();
+let setup = null;            // { sets, alerts, cameras: key -> info for cameras in sets }
+let settings = null;
+let setId = null;
+let mode = 'wall';
+let query = '';
+let onlyVideo = false;
+let load = null;
+let saveTimer = null;
+let lit = null;              // camera highlighted (hovered in the list)
+let openKey = null, openPreview = null;
+
+const currentSet = () => setup.sets.find((s) => s.id === setId) ?? setup.sets[0];
+const kindsOf = (key) => setup.alerts[key] ?? [];
+const inSet = (key) => currentSet().cameras.includes(key);
+const inAnySet = (key) => setup.sets.some((s) => s.cameras.includes(key));
+const infoOf = (key) => byKey.get(key) ?? setup.cameras[key];
+
+// ---- saving: the whole setup, a moment after the last change ----
+
+function changed() {
+  renderAll();
+  saveSoon();
+}
+
+function saveSoon() {
+  clearTimeout(saveTimer);
+  setSaved('Saving…');
+  saveTimer = setTimeout(save, SAVE_DELAY);
+}
+
+async function save() {
+  try {
+    const saved = await api('/api/setup', { sets: setup.sets, alerts: setup.alerts });
+    setup.cameras = saved.cameras;
+    setSaved('Saved');
+  } catch (err) {
+    setSaved('Not saved', true);
+    toast(`Couldn't save: ${err.message}`);
+  }
+}
+
+function setSaved(text, bad = false) {
+  $('#saved').textContent = text;
+  $('#saved').classList.toggle('bad', bad);
+}
+
+// ---- changes ----
+
+function selectSet(id, fit = true) {
+  setId = setup.sets.some((s) => s.id === id) ? id : setup.sets[0].id;
+  history.replaceState(null, '', `#set=${setId}`);
+  $('#wall-name').value = currentSet().name;
+  renderAll();
+  if (fit) fitSet();
+}
+
+function newSet() {
+  if (setup.sets.length >= MAX_SETS) return;
+  let n = setup.sets.length + 1;
+  while (setup.sets.some((s) => s.name === `Wall ${n}`)) n++;
+  const id = Math.random().toString(36).slice(2, 10);
+  setup.sets.push({ id, name: `Wall ${n}`, cameras: [] });
+  selectSet(id, false);
+  setMode('find');
+  changed();
+  $('#wall-name').select();
+}
+
+function deleteSet() {
+  const set = currentSet();
+  if (setup.sets.length < 2) return;
+  if (set.cameras.length && !confirm(`Delete the wall “${set.name}” and its ${set.cameras.length} cameras?`)) return;
+  setup.sets = setup.sets.filter((s) => s !== set);
+  for (const key of set.cameras) if (!inAnySet(key)) delete setup.alerts[key];
+  selectSet(setup.sets[0].id);
+  changed();
+}
+
+function toggleCamera(key) {
+  const set = currentSet();
+  if (set.cameras.includes(key)) {
+    set.cameras = set.cameras.filter((k) => k !== key);
+    if (!inAnySet(key)) delete setup.alerts[key];
+  } else if (set.cameras.length < MAX_SET_CAMERAS) {
+    set.cameras.push(key);
+    const camera = byKey.get(key);
+    if (camera) setup.cameras[key] = camera;
+  } else {
+    toast(`A wall can have ${MAX_SET_CAMERAS} cameras at most; make another wall for more.`);
+  }
+  changed();
+}
+
+function toggleKind(key, kind) {
+  const kinds = new Set(kindsOf(key));
+  kinds.has(kind) ? kinds.delete(kind) : kinds.add(kind);
+  if (kinds.size) setup.alerts[key] = Object.keys(KINDS).filter((k) => kinds.has(k));
+  else delete setup.alerts[key];
+  changed();
+}
+
+function setMode(next) {
+  mode = next;
+  for (const b of $$('#modes button')) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
+  $('#find').hidden = mode !== 'find';
+  renderPanel();
+  if (mode === 'find') $('#search').focus();
+}
+
+// ---- the panel ----
+
+function renderAll() {
+  renderWalls();
+  renderPanel();
+  layer.redraw();
+  renderMeter();
+  if (openKey) renderPopup();
+}
+
+function renderWalls() {
+  const tabs = setup.sets.map((set) => {
+    const b = el('button', { type: 'button', textContent: set.name, className: set.id === setId ? 'on' : '', title: `${set.cameras.length} cameras` });
+    b.addEventListener('click', () => selectSet(set.id));
+    return b;
+  });
+  const add = el('button', { type: 'button', className: 'new', textContent: '+ New wall', disabled: setup.sets.length >= MAX_SETS });
+  add.addEventListener('click', newSet);
+  $('#walls').replaceChildren(...tabs, add);
+  $('#delete-wall').disabled = setup.sets.length < 2;
+  const set = currentSet();
+  $('#modes button[data-mode="wall"]').textContent = `On this wall (${set.cameras.length})`;
+}
+
+function renderPanel() {
+  if (document.activeElement !== $('#wall-name')) $('#wall-name').value = currentSet().name;
+  if (mode === 'find') renderResults();
+  else renderSetList(currentSet());
+}
+
+function kindButtons(key) {
+  const reason = setup.cameras[key]?.no_alerts;
+  if (reason) return el('span', { className: 'sub', textContent: 'No alerts: its source’s terms don’t allow saving its pictures', title: reason });
+  const wrap = el('div', { className: 'kinds' });
+  for (const [kind, label] of Object.entries(KINDS)) {
+    const b = el('button', { type: 'button', className: 'chip', textContent: label, title: `Alert when this camera sees ${KIND_HELP[kind]}`,
+      dataset: { kind }, ariaPressed: String(kindsOf(key).includes(kind)) });
+    b.addEventListener('click', (event) => {
+      event.stopPropagation();  // (redrawn at once: the map would take a click on a detached button as its own)
+      toggleKind(key, kind);
+    });
+    wrap.append(b);
+  }
+  return wrap;
+}
+
+function where(camera) {
+  if (camera.key?.startsWith('mine/')) return 'Your own camera';
+  const parts = [STATE_NAMES[camera.state] ?? camera.state];
+  if (settings.home && Number.isFinite(camera.lat)) parts.push(`${distanceText(kmBetween(settings.home.lat, settings.home.lon, camera.lat, camera.lon), settings.units)} from home`);
+  if (camera.media & 2) parts.push(camera.media & 1 ? 'pictures and video' : 'video');
+  if (camera.online === false) parts.push('out of service');
+  return parts.join(' · ');
+}
+
+function nameButton(camera) {
+  const b = el('button', { type: 'button', className: 'name', textContent: camera.name, title: `${camera.name}: show on the map` });
+  b.addEventListener('click', () => showOnMap(camera.key));
+  return b;
+}
+
+function hoverable(row, key) {
+  row.addEventListener('mouseenter', () => { lit = key; layer.redraw(); });
+  row.addEventListener('mouseleave', () => { lit = null; layer.redraw(); });
+}
+
+function renderSetList(set) {
+  const watching = set.cameras.filter((key) => kindsOf(key).length).length;
+  $('#summary').textContent = set.cameras.length
+    ? `${set.cameras.length} camera${set.cameras.length === 1 ? '' : 's'}, ${watching} with alerts · drag to reorder` : '';
+  if (!set.cameras.length) {
+    const find = el('button', { className: 'btn primary', type: 'button', textContent: 'Find cameras' });
+    find.addEventListener('click', () => setMode('find'));
+    $('#list').replaceChildren(el('li', { className: 'empty-list' },
+      el('p', { textContent: 'No cameras on this wall yet. Click dots on the map, or search for a road or place.', style: 'margin-top: 0' }), find));
+    return;
+  }
+  $('#list').replaceChildren(...set.cameras.map((key) => {
+    const camera = infoOf(key);
+    const row = el('li', { className: 'row', draggable: true, dataset: { key } });
+    const remove = el('button', { type: 'button', className: 'remove', textContent: '✕', title: 'Take off this wall' });
+    remove.addEventListener('click', () => toggleCamera(key));
+    if (!camera || camera.gone) {
+      row.append(el('span', { className: 'grip', textContent: '⋮⋮' }), el('div', { className: 'info' },
+        el('span', { className: 'name', textContent: camera?.name ?? 'A camera no longer listed' }),
+        el('span', { className: 'sub', textContent: 'Its source no longer lists it, or is switched off in Settings' })), remove);
+      return row;
+    }
+    row.append(el('span', { className: 'grip', textContent: '⋮⋮', title: 'Drag to reorder' }),
+      el('div', { className: 'info' }, nameButton({ ...camera, key }),
+        el('span', { className: 'sub', textContent: `${where(camera)}${settings.detector ? ` · ${costText(key)}` : ''}` }),
+        settings.detector ? kindButtons(key) : null),
+      remove);
+    hoverable(row, key);
+    return row;
+  }));
+}
+
+// Every word typed has to be in the name ("i71" finds I-71); places matching it are offered first.
+function search(text) {
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean).map((w) => w.replace(/-/g, ''));
+  return cameras.filter((camera) => (!onlyVideo || camera.media & 2) && words.every((w) => camera.hay.includes(w)));
+}
+
+function inView() {
+  const b = map.getBounds();
+  return cameras.filter((c) => (!onlyVideo || c.media & 2) && b.contains([c.lat, c.lon]));
+}
+
+function renderResults() {
+  const center = map.getCenter();
+  const byNear = (list) => list.map((c) => [c, (c.lat - center.lat) ** 2 + ((c.lon - center.lng) * Math.cos(center.lat * Math.PI / 180)) ** 2])
+    .sort((a, b) => a[1] - b[1]).map(([c]) => c);
+  const found = byNear(query ? search(query) : inView());
+  const places = query.length >= 3 ? findPlaces(query, 3) : [];
+  const set = currentSet();
+  $('#find-hint').hidden = Boolean(query);
+  if (query) {
+    $('#summary').textContent = found.length > RESULTS ? `${found.length.toLocaleString()} cameras match; the ${RESULTS} nearest the map's middle are listed`
+      : found.length ? `${found.length} camera${found.length === 1 ? '' : 's'} match` : '';
+  } else {
+    $('#summary').textContent = map.getZoom() < 7 && found.length > RESULTS
+      ? `${found.length.toLocaleString()} cameras in view; zoom in, or search` : `${found.length.toLocaleString()} camera${found.length === 1 ? '' : 's'} in view`;
+  }
+  const rows = places.map((p) => {
+    const row = el('li', { className: 'row place', title: `Show the cameras around ${p.short}` },
+      el('span', { textContent: '📍' }), el('div', { className: 'info' }, el('span', { className: 'name', textContent: `Go to ${p.label}` })));
+    row.addEventListener('click', () => {
+      map.flyTo([p.lat, p.lon], 12, { duration: 0.8 });
+      $('#search').value = query = '';
+      setTimeout(renderPanel, 900);
+    });
+    return row;
+  });
+  rows.push(...found.slice(0, RESULTS).map((camera) => {
+    const added = set.cameras.includes(camera.key);
+    const add = el('button', { type: 'button', className: `btn small${added ? ' in' : ''}`, textContent: added ? '✓ Added' : '+ Add',
+      title: added ? `On ${set.name}; click to take it off` : `Add to ${set.name}`, disabled: !added && set.cameras.length >= MAX_SET_CAMERAS });
+    add.addEventListener('click', () => toggleCamera(camera.key));
+    const row = el('li', { className: 'row' }, el('span'), el('div', { className: 'info' }, nameButton(camera),
+      el('span', { className: 'sub', textContent: where(camera) })), add);
+    hoverable(row, camera.key);
+    return row;
+  }));
+  if (!rows.length) rows.push(el('li', { className: 'empty-list', textContent: query ? `No camera or place matches “${query}”.` : 'No cameras here. Move the map, or search.' }));
+  $('#list').replaceChildren(...rows);
+}
+
+// Dragging a camera in the wall's list moves it there; the wall shows them in this order.
+let dragging = null;
+$('#list').addEventListener('dragstart', (event) => {
+  dragging = event.target.closest('.row[draggable="true"]');
+  if (!dragging) return;
+  dragging.classList.add('dragging');
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', dragging.dataset.key);
+});
+$('#list').addEventListener('dragover', (event) => {
+  const over = event.target.closest('.row[draggable="true"]');
+  if (!dragging || !over || over === dragging) return;
+  event.preventDefault();
+  const { top, height } = over.getBoundingClientRect();
+  over.parentNode.insertBefore(dragging, event.clientY < top + height / 2 ? over : over.nextSibling);
+});
+$('#list').addEventListener('drop', (event) => event.preventDefault());
+$('#list').addEventListener('dragend', () => {
+  if (!dragging) return;
+  dragging.classList.remove('dragging');
+  dragging = null;
+  const order = $$('#list .row[data-key]').map((row) => row.dataset.key);
+  const set = currentSet();
+  if (order.join('\n') !== set.cameras.join('\n')) {
+    set.cameras = order;
+    changed();
+  }
+});
+
+// ---- the map: every camera as a dot ----
+
+const map = L.map('map', { minZoom: 3, worldCopyJump: true }).fitBounds(US_BOUNDS);
+baseMap(map);
+const layer = new CameraLayer([], (camera, r) => {
+  if (camera.key === lit) return { r: r + 5, fill: '#facc15', stroke: '#fff', width: 2, top: true };
+  if (inSet(camera.key)) {
+    return { r: r + 2.5, fill: '#2563eb', stroke: kindsOf(camera.key).length ? '#ef4444' : '#fff', width: kindsOf(camera.key).length ? 3 : 1.5, top: true };
+  }
+  if (camera.key.startsWith('mine/')) return { r: r + 2, fill: '#16a34a', stroke: '#fff', width: 1.5, top: true };
+  if (onlyVideo && !(camera.media & 2)) return null;
+  if (!camera.online) return { r: r * 0.8, fill: 'rgba(120, 120, 120, 0.45)' };
+  return { r, fill: camera.media & 2 ? 'rgba(124, 58, 237, 0.8)' : 'rgba(75, 85, 99, 0.8)', stroke: r > 3 ? 'rgba(255,255,255,0.7)' : null, width: 1 };
+}).addTo(map);
+hoverCameras(map, layer, (c) => c.name, (camera) => openCamera(camera.key));
+const legend = L.control({ position: 'bottomleft' });
+legend.onAdd = () => el('div', { className: 'legend' },
+  el('div', {}, el('i', { style: 'background: #2563eb; box-shadow: 0 0 0 1.5px #fff' }), 'On this wall'),
+  el('div', {}, el('i', { style: 'background: #2563eb; box-shadow: 0 0 0 2.5px #ef4444' }), 'On this wall, with alerts'),
+  el('div', {}, el('i', { style: 'background: rgba(75, 85, 99, 0.9)' }), 'Camera (pictures)'),
+  el('div', {}, el('i', { style: 'background: rgba(124, 58, 237, 0.9)' }), 'Camera with video'),
+  el('div', {}, el('i', { style: 'background: #16a34a; box-shadow: 0 0 0 1.5px #fff' }), 'Your own camera'));
+legend.addTo(map);
+
+let moveTimer = null;
+map.on('moveend', () => {
+  clearTimeout(moveTimer);
+  moveTimer = setTimeout(() => { if (mode === 'find' && !query) renderResults(); renderCount(); }, 150);
+});
+
+function renderCount() {
+  const b = map.getBounds();
+  let n = 0;
+  for (const c of cameras) if (b.contains([c.lat, c.lon])) n++;
+  $('#count-pill').hidden = false;
+  $('#count-pill').textContent = `${n.toLocaleString()} of ${cameras.length.toLocaleString()} cameras in view`;
+}
+
+function fitSet() {
+  const points = currentSet().cameras.map((key) => infoOf(key)).filter((c) => c && Number.isFinite(c.lat)).map((c) => [c.lat, c.lon]);
+  if (points.length > 1) map.flyToBounds(L.latLngBounds(points).pad(0.3), { maxZoom: 14, duration: 0.6 });
+  else if (points.length) map.flyTo(points[0], 13, { duration: 0.6 });
+  else if (settings.home) map.flyTo([settings.home.lat, settings.home.lon], 11, { duration: 0.6 });
+  else map.fitBounds(US_BOUNDS);
+}
+
+function showOnMap(key) {
+  const camera = infoOf(key);
+  if (!camera || !Number.isFinite(camera.lat)) return;
+  map.flyTo([camera.lat, camera.lon], Math.max(map.getZoom(), 13), { duration: 0.6 });
+  setTimeout(() => openCamera(key), 700);
+}
+
+// A camera's picture or video, with adding it and its alerts.
+const popup = L.popup({ maxWidth: 340, autoPanPadding: [20, 20] });
+let popupNode = null;
+
+async function openCamera(key) {
+  const camera = byKey.get(key);
+  if (!camera) return;
+  openPreview?.stop();
+  popupNode = el('div', { className: 'popup' });
+  openKey = key;
+  openPreview = preview(camera);
+  renderPopup();
+  popup.setLatLng([camera.lat, camera.lon]).setContent(popupNode).openOn(map);
+  openKey = key;  // (openOn closes the one open before, which clears it)
+  try {
+    const detail = await api(`/api/camera?key=${encodeURIComponent(key)}`);
+    if (openKey !== key) return;
+    camera.detail = detail;
+    renderPopup();
+  } catch {}
+}
+
+function renderPopup() {
+  const key = openKey, camera = byKey.get(key), set = currentSet(), here = set.cameras.includes(key);
+  const add = el('button', { type: 'button', className: `btn small${here ? '' : ' primary'}`,
+    textContent: here ? `✓ On ${set.name} · take off` : `+ Add to ${set.name}`, disabled: !here && set.cameras.length >= MAX_SET_CAMERAS });
+  add.addEventListener('click', (event) => {
+    event.stopPropagation();  // (as for the alert buttons: the map would close the popup)
+    toggleCamera(key);
+  });
+  const d = camera.detail;
+  const facts = d ? [d.road, d.direction && `facing ${d.direction}`, d.approach && `watching ${d.approach.toLowerCase()} traffic`, d.city, d.county].filter(Boolean).join(' · ') : '';
+  popupNode.replaceChildren(...[
+    el('strong', { textContent: camera.name }),
+    el('span', { className: 'sub', textContent: where(camera) }),
+    facts ? el('span', { className: 'sub', textContent: facts }) : null,
+    openPreview.node,
+    el('div', { className: 'actions' }, add),
+    here && settings.detector ? kindButtons(key) : null,
+    d ? el('div', { className: 'sub source' }, 'From ', el('a', { href: d.source.site, target: '_blank', rel: 'noopener', textContent: d.source.name }),
+      d.source.credit ? ` · ${d.source.credit}` : null) : null,
+    d?.source.disclaimer ? el('details', {}, el('summary', { textContent: 'Disclaimer' }),
+      el('p', { className: 'disclaimer', textContent: d.source.disclaimer })) : null,
+  ].filter(Boolean));
+  popup.update();
+}
+
+map.on('popupclose', () => {
+  openPreview?.stop();
+  openPreview = null;
+  openKey = popupNode = null;
+});
+
+// ---- the detector meter ----
+
+const fresh = () => load && Date.now() / 1000 - load.at < LOAD_STALE;
+const percent = (share) => `${share < 0.095 ? (100 * share).toFixed(1) : Math.round(100 * share)}%`;
+
+function costText(key) {
+  if (!kindsOf(key).length) return 'no alerts';
+  const measured = fresh() && load.cameras?.[key];
+  return measured ? `detector ${percent(measured.share)}` : `detector ≈${percent(ESTIMATE)}`;
+}
+
+function renderMeter() {
+  meter.hidden = !settings.detector;
+  const watched = Object.keys(setup.alerts).filter((key) => kindsOf(key).length && inAnySet(key));
+  const share = watched.reduce((sum, key) => sum + (fresh() && load.cameras?.[key] ? load.cameras[key].share : ESTIMATE), 0);
+  $('.bar i', meter).style.width = `${Math.min(100, 100 * share)}%`;
+  meter.classList.toggle('warm', share >= 0.6 && share < 0.85);
+  meter.classList.toggle('hot', share >= 0.85);
+  let text = `${fresh() ? '' : '≈'}${Math.round(100 * share)}% · ${watched.length} camera${watched.length === 1 ? '' : 's'}`;
+  if (!fresh()) text += ' · not running';
+  else if (share >= 0.85) text += ' · alerts will lag';
+  $('#meter-text').textContent = text;
+}
+
+async function pollLoad() {
+  try { load = await api('/api/load'); } catch { load = null; }
+  renderMeter();
+}
+
+// ---- start ----
+
+$('#wall-name').addEventListener('input', (event) => {
+  const name = event.target.value.trim();
+  if (!name) return;
+  currentSet().name = name;
+  renderWalls();
+  saveSoon();
+});
+$('#wall-name').addEventListener('blur', (event) => { event.target.value = currentSet().name; });
+$('#delete-wall').addEventListener('click', deleteSet);
+for (const b of $$('#modes button')) b.addEventListener('click', () => setMode(b.dataset.mode));
+let searchTimer = null;
+$('#search').addEventListener('input', (event) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { query = event.target.value.trim(); renderPanel(); }, 120);
+});
+$('#search').addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') { event.target.value = query = ''; renderPanel(); }
+});
+$('#only-video').addEventListener('click', () => {
+  onlyVideo = !onlyVideo;
+  $('#only-video').setAttribute('aria-pressed', String(onlyVideo));
+  layer.redraw();
+  renderPanel();
+});
+$('#near-me').addEventListener('click', () => map.flyTo([settings.home.lat, settings.home.lon], 11, { duration: 0.8 }));
+addEventListener('keydown', (event) => {
+  if (event.key === '/' && !event.target.closest('input')) {
+    event.preventDefault();
+    setMode('find');
+  }
+});
+addEventListener('hashchange', () => selectSet(new URLSearchParams(location.hash.slice(1)).get('set')));
+
+(async () => {
+  try {
+    const [state, list, saved] = await Promise.all([api('/api/state'), loadCameras(), api('/api/setup'), loadPlaces()]);
+    settings = state.settings;
+    applyTheme(settings.theme);
+    cameras = list.filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon));
+    for (const c of cameras) c.hay = `${c.name} ${STATE_NAMES[c.state] ?? ''} ${c.state}`.toLowerCase().replace(/-/g, '');
+    byKey = new Map(cameras.map((c) => [c.key, c]));
+    setup = saved;
+  } catch (err) {
+    $('#summary').textContent = `camwall isn't answering (${err.message}). Is it still running?`;
+    return;
+  }
+  $('#near-me').hidden = !settings.home;
+  $('#search').placeholder = `Search ${cameras.length.toLocaleString()} cameras by road, place or ZIP  ( / )`;
+  layer.setCameras(cameras);
+  selectSet(new URLSearchParams(location.hash.slice(1)).get('set'));
+  if (!currentSet().cameras.length) setMode('find');
+  renderCount();
+  pollLoad();
+  setInterval(pollLoad, LOAD_POLL);
+})();
+</script>
+</body>
+</html>

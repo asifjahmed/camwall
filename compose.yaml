@@ -1,0 +1,11 @@
+# docker compose up -d, then open http://127.0.0.1:8780/ on the same machine (README › Docker).
+services:
+  camwall:
+    build: .
+    network_mode: host     # camwall's page on the host's 127.0.0.1:8780; phones pair on :8781
+    volumes:
+      - camwall-data:/data # settings, walls, alerts, your cameras (passwords in a file only this container's user reads)
+    restart: unless-stopped
+
+volumes:
+  camwall-data:

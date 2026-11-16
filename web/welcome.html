@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Welcome to camwall</title>
+<link rel="icon" href="/icon.svg">
+<link rel="stylesheet" href="/vendor/leaflet.css">
+<link rel="stylesheet" href="/app.css">
+<style>
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  main { flex: 1; width: min(1080px, 100%); margin: 0 auto; padding: 28px 16px 40px; }
+  .steps { display: flex; gap: 6px; margin: 0 0 22px; padding: 0; list-style: none; color: var(--faint); font-size: 13px; font-weight: 500; }
+  .steps li { display: flex; align-items: center; gap: 6px; }
+  .steps li + li::before { content: ""; width: 22px; height: 1px; background: var(--line); margin-right: 2px; }
+  .steps b { display: grid; place-content: center; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); font-size: 12px; }
+  .steps li.on { color: var(--text); }
+  .steps li.on b { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .steps li.done b { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+  h1 { margin: 0 0 8px; font-size: clamp(26px, 4vw, 36px); line-height: 1.15; letter-spacing: -0.02em; }
+  h2 { margin: 0 0 6px; font-size: 24px; letter-spacing: -0.01em; }
+  .lead { margin: 0 0 24px; max-width: 640px; color: var(--muted); font-size: 16px; }
+  .where { display: flex; flex-wrap: wrap; gap: 10px; max-width: 640px; }
+  .where .suggest { flex: 1 1 280px; }
+  .where .field { padding: 12px 14px; font-size: 16px; border-radius: 10px; }
+  .where-note { margin: 10px 0 0; min-height: 1.5em; color: var(--muted); }
+  .where-note.bad { color: var(--bad); }
+  .skip { margin-top: 26px; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 40px; max-width: 900px; }
+  .fact { padding: 14px 16px; }
+  .fact strong { display: block; font-size: 22px; letter-spacing: -0.01em; }
+  .fact span { color: var(--muted); font-size: 13px; }
+
+  .pick { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 16px; height: min(620px, calc(100vh - 260px)); min-height: 420px; margin-top: 14px; }
+  .pick .card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .pick-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px; border-bottom: 1px solid var(--line); }
+  .near { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; min-height: 0; }
+  .near li label { display: grid; grid-template-columns: auto 96px 1fr; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+  .near li label:hover, .near li.lit label { background: var(--raised); }
+  .near input { width: 17px; height: 17px; accent-color: var(--accent); }
+  .near .thumb { width: 96px; aspect-ratio: 16 / 9; border-radius: 6px; background: #000 center / cover no-repeat; position: relative; overflow: hidden; }
+  .near .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .near .thumb b { position: absolute; inset: 0; display: grid; place-content: center; color: #fff; font-size: 20px; opacity: 0.8; }
+  .near .thumb i { position: absolute; right: 4px; bottom: 3px; padding: 0 5px; border-radius: 4px; background: rgb(0 0 0 / 0.6); color: #fff; font: 10px var(--font); font-style: normal; }
+  .near .name { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .near .sub { display: block; color: var(--muted); font-size: 12px; }
+  .near .empty { padding: 20px 12px; color: var(--muted); }
+  #map { flex: 1; min-height: 0; }
+  .set-name { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+  .restricted { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 14%, transparent); }
+  .restricted b { display: block; margin-bottom: 4px; }
+  .restricted q { display: block; margin: 6px 0; font-size: 12px; font-style: italic; color: var(--muted); }
+  .set-name label { color: var(--muted); font-size: 13px; white-space: nowrap; }
+
+  .alerts { display: grid; gap: 18px; max-width: 720px; margin-top: 10px; }
+  .alerts section { padding: 18px 20px; }
+  .alerts h3 { margin: 0 0 4px; font-size: 16px; }
+  .alerts p { margin: 0 0 12px; color: var(--muted); }
+  .kinds { display: flex; flex-wrap: wrap; gap: 10px; }
+  .kinds .chip { padding: 8px 18px; font-size: 15px; }
+  .ways { display: grid; gap: 12px; }
+  .quiet { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+  .quiet input[type="time"] { width: auto; padding: 5px 8px; }
+  .detector-note { padding: 12px 14px; border-radius: 10px; background: var(--accent-soft); color: var(--text); }
+
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 22px; }
+  @media (max-width: 760px) {
+    .pick { grid-template-columns: 1fr; height: auto; }
+    #map { height: 280px; flex: none; }
+    .pick .card:first-child { max-height: 60vh; }
+    .near li label { grid-template-columns: auto 72px 1fr; }
+    .near .thumb { width: 72px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <ol class="steps" id="steps">
+    <li data-step="1"><b>1</b>Where you are</li>
+    <li data-step="2"><b>2</b>Cameras</li>
+    <li data-step="3"><b>3</b>Alerts</li>
+  </ol>
+
+  <section id="step1">
+    <h1>Live traffic cameras near you</h1>
+    <p class="lead" id="lead">camwall puts the public traffic cameras of the United States on one wall, and can tell you when
+      one of yours sees a police car, an ambulance or a fire truck. It all runs on this computer.</p>
+    <div class="where">
+      <div><input class="field" id="where" autocomplete="off" placeholder="ZIP code, town or county" aria-label="Your ZIP code, town or county" autofocus></div>
+      <button class="btn big" type="button" id="locate">📍 Use my location</button>
+    </div>
+    <p class="where-note" id="where-note"></p>
+    <div class="facts" id="facts"></div>
+    <div class="skip"><button class="btn quiet" type="button" id="skip">Skip: I'll find cameras on the map myself →</button></div>
+  </section>
+
+  <section id="step2" hidden>
+    <h2 id="near-title">Cameras near you</h2>
+    <p class="lead" style="margin-bottom: 0">Tick the ones you want on your wall. You can change them any time, and make more walls, under Cameras.</p>
+    <div class="pick">
+      <div class="card">
+        <div class="pick-head">
+          <span class="muted small">Within</span>
+          <div class="segmented" id="radius"></div>
+          <span class="grow"></span>
+          <span class="muted small" id="chosen-count"></span>
+        </div>
+        <ul class="near" id="near"></ul>
+        <div class="set-name"><label for="set-name">Call this wall</label><input class="field" id="set-name" maxlength="40"></div>
+      </div>
+      <div class="card"><div id="map"></div></div>
+    </div>
+    <div id="restricted"></div>
+    <div class="actions">
+      <button class="btn" type="button" data-go="1">← Back</button>
+      <button class="btn primary big" type="button" id="to-alerts">Next: alerts →</button>
+    </div>
+  </section>
+
+  <section id="step3" hidden>
+    <h2>Alerts</h2>
+    <p class="lead" style="margin-bottom: 8px">camwall can watch your cameras and tell you when one sees:</p>
+    <div class="alerts">
+      <section class="card">
+        <div class="kinds" id="kinds"></div>
+        <p class="small" style="margin: 12px 0 0">Leave them all off to just watch. You can choose per camera later.</p>
+      </section>
+      <section class="card">
+        <h3>How to tell you</h3>
+        <p>When a camera sees one:</p>
+        <div class="ways">
+          <label class="switch"><input type="checkbox" id="sound" checked>A chime</label>
+          <label class="switch"><input type="checkbox" id="voice" checked>Say what it saw, and where (“Ambulance on I-35 at University Ave”)</label>
+          <label class="switch"><input type="checkbox" id="desktop" checked>A notification on this computer</label>
+          <div class="quiet">
+            <label class="switch"><input type="checkbox" id="quiet">Quiet hours, with no sound, from</label>
+            <input class="field" type="time" id="quiet-from" value="22:00" aria-label="Quiet from"> to
+            <input class="field" type="time" id="quiet-to" value="07:00" aria-label="Quiet until">
+          </div>
+        </div>
+      </section>
+      <p class="detector-note small">Spotting police cars, ambulances and fire trucks is done on this computer by camwall's detector.
+        The more cameras it watches, the more of the computer it uses; the Cameras page shows how much.</p>
+    </div>
+    <div class="actions">
+      <button class="btn" type="button" data-go="2">← Back</button>
+      <button class="btn primary big" type="button" id="finish">Open my wall →</button>
+    </div>
+  </section>
+</main>
+
+<script src="/vendor/leaflet.js"></script>
+<script src="/app.js"></script>
+<script>
+const RADII = [5, 10, 25, 50];   // miles
+const PICKED = 4;                // nearest cameras ticked to start with
+const LISTED = 60;               // nearest cameras listed at most
+const THUMBS = 14;               // of which this many show their picture
+const MAX_CHOSEN = 64;           // cameras a wall can have (as the server allows)
+
+let cameras = [];
+let home = null;                 // { label, short, state, lat, lon }
+let radius = 10;
+let chosen = new Set();
+let near = [];                   // [{ camera, km }] within the radius, nearest first
+let kinds = new Set(['police', 'ambulance', 'fire']);
+let map = null, layer = null, homeMarker = null;
+let units = 'mi';
+
+function go(step) {
+  for (const n of [1, 2, 3]) $(`#step${n}`).hidden = n !== step;
+  for (const li of $$('#steps li')) {
+    li.classList.toggle('on', Number(li.dataset.step) === step);
+    li.classList.toggle('done', Number(li.dataset.step) < step);
+  }
+  if (step === 2) showNear();
+  scrollTo(0, 0);
+}
+
+// ---- 1: where you are ----
+
+function setHome(place) {
+  home = place;
+  const st = place.state ?? cameras.reduce((best, c) => {  // (the state of the nearest camera, if no town was near)
+    const km = kmBetween(place.lat, place.lon, c.lat, c.lon);
+    return km < best.km ? { km, state: c.state } : best;
+  }, { km: Infinity, state: null }).state;
+  home.state = st;
+  chosen = new Set();
+  const nearby = byDistance().filter((n) => n.km / 1.609344 <= 50);
+  radius = RADII.find((r) => nearby.filter((n) => n.km / 1.609344 <= r).length >= PICKED) ?? 50;
+  go(2);
+}
+
+function byDistance() {
+  return cameras.map((camera) => ({ camera, km: kmBetween(home.lat, home.lon, camera.lat, camera.lon) })).sort((a, b) => a.km - b.km);
+}
+
+$('#locate').addEventListener('click', async () => {
+  const note = $('#where-note');
+  note.classList.remove('bad');
+  note.textContent = 'Asking the browser where this computer is…';
+  try {
+    const at = await locate();
+    const place = await placeAt(at.lat, at.lon);
+    note.textContent = '';
+    setHome({ ...place, short: place.label, lat: at.lat, lon: at.lon });
+  } catch (err) {
+    note.textContent = `${err.message}. Type your ZIP code or town instead.`;
+    note.classList.add('bad');
+  }
+});
+$('#skip').addEventListener('click', () => finish(true));
+
+// ---- 2: cameras near you ----
+
+function showNear() {
+  $('#near-title').textContent = `Cameras near ${home.short}`;
+  if (!$('#set-name').value) $('#set-name').value = `Near ${home.short.split(',')[0]}`.slice(0, 40);
+  const all = byDistance();
+  near = all.filter((n) => n.km / 1.609344 <= radius).slice(0, LISTED);
+  const fallback = !near.length;
+  if (fallback) near = all.slice(0, 12);  // (none close by: the nearest anyway)
+  if (!chosen.size) for (const { camera } of near.slice(0, PICKED)) chosen.add(camera.key);
+  $('#radius').replaceChildren(...RADII.map((r) => {
+    const b = el('button', { type: 'button', textContent: `${r} mi`, ariaPressed: String(r === radius) });
+    b.addEventListener('click', () => { radius = r; showNear(); });
+    return b;
+  }));
+  const list = near.map(({ camera, km }, i) => {
+    const box = el('input', { type: 'checkbox', checked: chosen.has(camera.key) });
+    box.addEventListener('change', () => {
+      if (box.checked && chosen.size >= MAX_CHOSEN) {
+        box.checked = false;
+        return toast(`A wall can have ${MAX_CHOSEN} cameras; make more walls under Cameras later.`);
+      }
+      box.checked ? chosen.add(camera.key) : chosen.delete(camera.key);
+      renderChosen();
+    });
+    const thumb = el('span', { className: 'thumb' });
+    if (i < THUMBS && camera.media & 1) thumb.append(el('img', { src: camUrl(camera.key), alt: '', loading: 'lazy', onerror() { this.remove(); } }));
+    if (camera.media & 2) thumb.append(el('i', { textContent: 'video' }));
+    if (!(camera.media & 1)) thumb.append(el('b', { textContent: '▶' }));
+    const li = el('li', { dataset: { key: camera.key } }, el('label', {}, box, thumb, el('span', {},
+      el('span', { className: 'name', textContent: camera.name }),
+      el('span', { className: 'sub', textContent: `${distanceText(km, units)} away · ${STATE_NAMES[camera.state] ?? camera.state}${camera.online ? '' : ' · out of service'}` }))));
+    li.addEventListener('mouseenter', () => { lit = camera.key; layer?.redraw(); });
+    li.addEventListener('mouseleave', () => { lit = null; layer?.redraw(); });
+    return li;
+  });
+  $('#near').replaceChildren(...(fallback ? [el('li', { className: 'empty', textContent: `No public cameras within ${radius} miles yet. These are the nearest:` })] : []), ...list);
+  renderChosen();
+  showMap();
+  showRestricted();
+}
+
+// Sources in the user's state whose terms restrict apps like this one are off, so their cameras aren't above. Say
+// so, with their terms, and let the user turn them on for their own use.
+async function showRestricted() {
+  let list = [];
+  try { list = await api('/api/sources'); } catch { return; }
+  const off = list.filter((s) => s.restricted && !s.on && (Array.isArray(s.state) ? s.state : [s.state]).includes(home.state));
+  $('#restricted').replaceChildren(...off.map((s) => {
+    const on = el('button', { type: 'button', className: 'btn small', textContent: 'Turn it on for my own use' });
+    on.addEventListener('click', async () => {
+      on.disabled = true;
+      on.textContent = 'Fetching its cameras…';
+      await api('/api/settings', { sources: { [s.module]: true } });
+      for (let i = 0; i < 30; i++) {  // (its list is fetched now: a few seconds)
+        await new Promise((r) => setTimeout(r, 2000));
+        const fresh = await loadCameras();
+        if (fresh.length > cameras.length) {
+          cameras = fresh.filter((c) => Number.isFinite(c.lat));
+          layer?.setCameras(cameras);
+          return showNear();
+        }
+      }
+      on.textContent = 'Its list didn\'t come: try Settings › Camera sources later';
+    });
+    return el('div', { className: 'restricted' },
+      el('b', { textContent: `${s.name} is off${s.cameras ? ` (${s.cameras.toLocaleString()} cameras)` : ''}` }),
+      el('span', { className: 'small', textContent: 'Its terms restrict apps like this one:' }),
+      el('q', { textContent: s.restricted }), on);
+  }));
+}
+
+let lit = null;
+function renderChosen() {
+  $('#chosen-count').textContent = `${chosen.size} chosen`;
+  $('#to-alerts').disabled = false;
+  $('#to-alerts').textContent = chosen.size ? 'Next: alerts →' : 'Next (no cameras yet) →';
+  layer?.redraw();
+}
+
+function showMap() {
+  if (!map) {
+    map = L.map('map', { zoomControl: true });
+    baseMap(map);
+    layer = new CameraLayer(cameras, (camera, r) => {
+      if (camera.key === lit) return { r: r + 5, fill: '#facc15', stroke: '#fff', width: 2, top: true };
+      if (chosen.has(camera.key)) return { r: r + 3, fill: '#2563eb', stroke: '#fff', width: 2, top: true };
+      return { r, fill: 'rgba(100, 110, 125, 0.75)' };
+    }).addTo(map);
+    hoverCameras(map, layer, (c) => c.name, (camera) => {
+      if (!chosen.has(camera.key) && chosen.size >= MAX_CHOSEN) {
+        return toast(`A wall can have ${MAX_CHOSEN} cameras; make more walls under Cameras later.`);
+      }
+      chosen.has(camera.key) ? chosen.delete(camera.key) : chosen.add(camera.key);
+      if (!near.some((n) => n.camera.key === camera.key)) {
+        near.push({ camera, km: kmBetween(home.lat, home.lon, camera.lat, camera.lon) });
+      }
+      const box = $(`#near li[data-key="${CSS.escape(camera.key)}"] input`);
+      if (box) box.checked = chosen.has(camera.key);
+      else showNear();
+      renderChosen();
+    });
+  }
+  setTimeout(() => {
+    map.invalidateSize();
+    homeMarker?.remove();
+    homeMarker = L.circleMarker([home.lat, home.lon], { radius: 7, color: '#fff', weight: 3, fillColor: '#ef4444', fillOpacity: 1 })
+      .bindTooltip('You', { permanent: false }).addTo(map);
+    const points = [[home.lat, home.lon], ...near.slice(0, 20).map((n) => [n.camera.lat, n.camera.lon])];
+    map.fitBounds(L.latLngBounds(points).pad(0.15), { maxZoom: 14 });
+  });
+}
+
+$('#to-alerts').addEventListener('click', () => go(3));
+
+// ---- 3: alerts ----
+
+$('#kinds').replaceChildren(...Object.entries(KINDS).map(([kind, label]) => {
+  const b = el('button', { type: 'button', className: 'chip', textContent: { police: '🚓 Police', ambulance: '🚑 Ambulance', fire: '🚒 Fire trucks' }[kind],
+    ariaPressed: String(kinds.has(kind)), dataset: { kind }, title: `Tell me when a camera sees ${KIND_HELP[kind]}` });
+  b.addEventListener('click', () => {
+    kinds.has(kind) ? kinds.delete(kind) : kinds.add(kind);
+    b.setAttribute('aria-pressed', String(kinds.has(kind)));
+  });
+  return b;
+}));
+
+async function finish(skipped = false) {
+  const button = $('#finish');
+  button.disabled = true;
+  try {
+    const settings = { welcomed: true };
+    if (home) settings.home = { label: home.short, lat: home.lat, lon: home.lon, state: home.state };
+    if (!skipped) {
+      Object.assign(settings, { sound: $('#sound').checked, voice: $('#voice').checked, desktop: $('#desktop').checked,
+        quiet: $('#quiet').checked ? { from: $('#quiet-from').value, to: $('#quiet-to').value } : null });
+      const keys = [...chosen];
+      await api('/api/setup', {
+        sets: [{ id: 'home', name: $('#set-name').value.trim() || 'My cameras', cameras: keys }],
+        alerts: Object.fromEntries(keys.map((k) => [k, [...kinds]])),
+      });
+    }
+    await api('/api/settings', settings);
+    location.href = skipped ? '/cameras.html' : '/';
+  } catch (err) {
+    toast(`Couldn't save: ${err.message}`);
+    button.disabled = false;
+  }
+}
+$('#finish').addEventListener('click', () => finish(false));
+for (const b of $$('[data-go]')) b.addEventListener('click', () => go(Number(b.dataset.go)));
+
+// ---- start ----
+
+(async () => {
+  go(1);
+  placeSearch($('#where'), setHome);
+  try {
+    const [state, list] = await Promise.all([api('/api/state'), loadCameras(), loadPlaces()]);
+    applyTheme(state.settings.theme);
+    units = state.settings.units;
+    cameras = list.filter((c) => Number.isFinite(c.lat));
+    const states = new Set(cameras.map((c) => c.state));
+    $('#facts').replaceChildren(
+      el('div', { className: 'card fact' }, el('strong', { textContent: cameras.length.toLocaleString() }), el('span', { textContent: 'public traffic cameras' })),
+      el('div', { className: 'card fact' }, el('strong', { textContent: String(states.size) }), el('span', { textContent: 'states with cameras' })),
+      el('div', { className: 'card fact' }, el('strong', { textContent: 'On this computer' }), el('span', { textContent: 'no account, no cloud: where you are stays here' })));
+    if (state.settings.home) {
+      const h = state.settings.home;
+      $('#where').value = h.label;
+      $('#where-note').textContent = `Last time: ${h.label}. Press Enter to use it again, or type another.`;
+      $('#where').addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && $('#where').value === h.label) setHome({ ...h, short: h.label });
+      });
+    }
+  } catch (err) {
+    $('#where-note').textContent = `camwall isn't answering (${err.message}). Is it still running?`;
+    $('#where-note').classList.add('bad');
+  }
+})();
+</script>
+</body>
+</html>
