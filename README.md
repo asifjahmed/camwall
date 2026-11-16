@@ -6,8 +6,9 @@ ambulance, a fire truck or a police car, and it shows your own home or business 
 
 It runs on your own computer: no account, no cloud. It opens in your browser.
 
-![A wall of traffic cameras](docs/wall.jpg)
-*Iowa DOT cameras in Des Moines (pictures: Iowa DOT, CC BY 4.0).*
+[![camwall: set up near Des Moines, its wall, one camera's live video, and every camera on the map](docs/demo.webp)](docs/demo.mp4)
+*Setting up near Des Moines, the wall, one camera's live video, and the map of every camera. The
+[full video](docs/demo.mp4) is 56 seconds. Pictures: Iowa DOT, CC BY 4.0.*
 
 ## Getting it
 
@@ -40,6 +41,8 @@ and asks which alerts you want.
   - zoom into a picture;
   - black and white for night;
   - full screen.
+
+  ![A wall of traffic cameras](docs/wall.jpg)
 - **Restricted sources:** some sources' terms restrict apps like this one. They're off until the user turns them on
   (Settings › Camera sources, which quotes their terms).
 

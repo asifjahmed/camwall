@@ -6,13 +6,20 @@ installing to run it (the detector installs its own libraries when the user turn
     python3 tools/package.py linux      camwall-<version>-linux.tar.gz
     python3 tools/package.py all
 
-Run tools/build_catalogue.py first, so the downloads carry today's camera lists. The Mac app isn't signed: until it's
-signed and notarized with an Apple Developer ID, macOS asks the user to allow it (System Settings › Privacy &
-Security › Open Anyway) the first time.
+Run tools/build_catalogue.py first, so the downloads carry today's camera lists.
+
+The Mac app is signed and notarized when these are set (unsigned otherwise, and macOS then asks the user to allow it in
+System Settings › Privacy & Security the first time):
+
+    CAMWALL_SIGN_IDENTITY="Developer ID Application: <name> (<team>)"   (security find-identity -v -p codesigning)
+    CAMWALL_NOTARY_PROFILE=<profile>   (xcrun notarytool store-credentials <profile> --apple-id <id> --team-id <team>)
+
+With only the identity, the app is signed but not notarized (for trying the signing).
 """
 
 import hashlib
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -126,11 +133,80 @@ INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 </dict></plist>
 """
 
-MAC_LAUNCHER = """#!/bin/bash
-# Starts camwall (or, if it's running, opens it) with the Python inside this app.
-here="$(cd "$(dirname "$0")/../Resources" && pwd)"
-exec "$here/python/bin/python3" "$here/app/camwall.py" "$@"
+# The app's own program: starts camwall (or, if it's running, opens it) with the Python inside the app. It's compiled,
+# not a script, so that it can be signed with the hardened runtime. Python's compiled files go to the user's caches,
+# since writing them inside the app would break its signature.
+MAC_LAUNCHER = r"""
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+int main(int argc, char *argv[]) {
+    char exe[PATH_MAX], here[PATH_MAX], python[PATH_MAX], script[PATH_MAX], cache[PATH_MAX];
+    uint32_t size = sizeof exe;
+    if (_NSGetExecutablePath(exe, &size) != 0 || !realpath(exe, here)) return 1;
+    *strrchr(here, '/') = 0;  /* .../camwall.app/Contents/MacOS */
+    snprintf(python, sizeof python, "%s/../Resources/python/bin/python3", here);
+    snprintf(script, sizeof script, "%s/../Resources/app/camwall.py", here);
+    if (getenv("HOME")) {
+        snprintf(cache, sizeof cache, "%s/Library/Caches/camwall/python", getenv("HOME"));
+        setenv("PYTHONPYCACHEPREFIX", cache, 0);
+    }
+    char **args = calloc(argc + 2, sizeof *args);
+    args[0] = python;
+    args[1] = script;
+    for (int i = 1; i < argc; i++) args[i + 1] = argv[i];
+    execv(python, args);
+    perror("camwall: its Python didn't start");
+    return 1;
+}
 """
+# What the app's Python may do under the hardened runtime: ctypes' callbacks need writable code memory, and the
+# detector's libraries (installed when the user turns it on, signed by others or not at all) need to load.
+ENTITLEMENTS = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict></plist>
+"""
+MACH_O = (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xfe\xed\xfa\xce", b"\xca\xfe\xba\xbe")
+
+
+def mac_launcher(file):
+    source = DIST / "launcher.c"
+    source.write_text(MAC_LAUNCHER)
+    subprocess.run(["clang", "-arch", "arm64", "-arch", "x86_64", "-mmacosx-version-min=11.0", "-O2", "-Wall",
+                    "-o", str(file), str(source)], check=True)
+    source.unlink()
+
+
+def sign(path, identity, entitlements=None):
+    subprocess.run(["codesign", "--force", "--timestamp", "--options", "runtime", "--sign", identity,
+                    *(["--entitlements", str(entitlements)] if entitlements else []), str(path)],
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def sign_app(bundle, identity):
+    """Sign every program and library inside the app, then the app (inside out, as codesign needs)."""
+    entitlements = DIST / "entitlements.plist"
+    entitlements.write_text(ENTITLEMENTS)
+    for file in sorted(bundle.rglob("*"), key=lambda f: -len(f.parts)):
+        if file.is_file() and not file.is_symlink():
+            with file.open("rb") as f:
+                if f.read(4) in MACH_O:
+                    sign(file, identity, entitlements)
+    sign(bundle, identity, entitlements)
+    subprocess.run(["codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
+    entitlements.unlink()
+
+
+def notarize(file, profile):
+    """Have Apple notarize a .zip or .dmg, and staple its ticket to it (or to the app the zip holds)."""
+    subprocess.run(["xcrun", "notarytool", "submit", str(file), "--keychain-profile", profile, "--wait"], check=True)
 
 
 def build_mac(target):
@@ -141,18 +217,32 @@ def build_mac(target):
     (app / "MacOS").mkdir(parents=True)
     (app / "Resources").mkdir()
     (app / "Info.plist").write_text(INFO_PLIST.format(version=VERSION))
-    launcher = app / "MacOS" / "camwall"
-    launcher.write_text(MAC_LAUNCHER)
-    launcher.chmod(0o755)
+    mac_launcher(app / "MacOS" / "camwall")
     mac_icns(app / "Resources" / "camwall.icns")
     unpack_python(target, app / "Resources")
     copy_payload(app / "Resources" / "app")
+    identity, profile = os.environ.get("CAMWALL_SIGN_IDENTITY"), os.environ.get("CAMWALL_NOTARY_PROFILE")
+    bundle = work / "camwall.app"
+    if identity:
+        sign_app(bundle, identity)
+        if profile:  # (the app first, so that it carries its own ticket once it's copied out of the disk image)
+            zipped = DIST / f"{name}-app.zip"
+            subprocess.run(["ditto", "-c", "-k", "--keepParent", str(bundle), str(zipped)], check=True)
+            notarize(zipped, profile)
+            zipped.unlink()
+            subprocess.run(["xcrun", "stapler", "staple", str(bundle)], check=True, stdout=subprocess.DEVNULL)
     (work / "Applications").symlink_to("/Applications")
     dmg = DIST / f"{name}.dmg"
     dmg.unlink(missing_ok=True)
     subprocess.run(["hdiutil", "create", "-volname", "camwall", "-srcfolder", str(work), "-ov", "-format", "UDZO",
                     str(dmg)], check=True, stdout=subprocess.DEVNULL)
-    print(f"{dmg} ({dmg.stat().st_size // 1024 // 1024} MB)")
+    if identity:
+        subprocess.run(["codesign", "--force", "--timestamp", "--sign", identity, str(dmg)], check=True)
+        if profile:
+            notarize(dmg, profile)
+            subprocess.run(["xcrun", "stapler", "staple", str(dmg)], check=True, stdout=subprocess.DEVNULL)
+    state = "notarized" if identity and profile else "signed, not notarized" if identity else "not signed"
+    print(f"{dmg} ({dmg.stat().st_size // 1024 // 1024} MB, {state})")
     return work
 
 

@@ -1,6 +1,6 @@
 # Coverage
 
-63,747 distinct public cameras from 128 sources (33,195 with live video); 51,030 from sources that are on by default. Built from sources/out/ on 2026-11-15; the same camera listed by two sources is counted once (see app/catalogue.py).
+63,747 distinct public cameras from 128 sources (33,195 with live video); 51,030 from sources that are on by default. Built from sources/out/ on 2026-11-16; the same camera listed by two sources is counted once (see app/catalogue.py).
 
 | State | Cameras | On by default | With video | Sources |
 |---|---:|---:|---:|---|
