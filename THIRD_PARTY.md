@@ -32,9 +32,9 @@ licences of the libraries it bundles.
   - These lists are the agencies' data, not camwall's: camwall's licence doesn't cover them, and each stays under its
     source's terms.
 - **Camera pictures and video** aren't included. Each install fetches them from the agency that publishes them,
-  and they belong to that agency. The only exceptions are the screenshots, the demo video and the preview image
-  in `docs/`, which show Iowa DOT's pictures and video (CC BY 4.0) and OpenStreetMap's map. Settings › Camera
-  sources links each source's site and terms.
+  and they belong to that agency. The only exceptions are the screenshots, the demo animation and the preview image
+  in `docs/`, and the demo video the README links, which show Iowa DOT's pictures and video (CC BY 4.0) and
+  OpenStreetMap's map. Settings › Camera sources links each source's site and terms.
 
 ## Map
 

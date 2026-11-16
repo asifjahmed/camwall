@@ -7,9 +7,15 @@ ambulance, a fire truck or a police car, and it shows your own home or business 
 It runs on your own computer: no account, no cloud. It opens in your browser.
 
 ![camwall: set up near Des Moines, its wall, one camera's live video, and every camera on the map](docs/demo.webp)
-*Setting up near Des Moines, the wall, one camera's live video, and the map of every camera (sped up). The full video:
-[demo.mp4](https://github.com/asifjahmed/camwall/raw/main/docs/demo.mp4) (56 s, 11 MB download). Pictures: Iowa DOT,
-CC BY 4.0.*
+*Setting up near Des Moines, the wall, one camera's live video, and the map of every camera (sped up). Pictures: Iowa
+DOT, CC BY 4.0.*
+
+<details>
+<summary>Watch the full demo (56 seconds)</summary>
+
+https://github.com/user-attachments/assets/8905be5f-d52a-44b3-8888-f64230ba1b5b
+
+</details>
 
 ## Getting it
 
